@@ -1,0 +1,47 @@
+{
+  "name": "movira-crm",
+  "version": "0.1.0",
+  "description": "Movira CRM communication service for transactional messaging and marketing CRM.",
+  "main": "src/server.js",
+  "scripts": {
+    "migrate": "npx sequelize-cli db:migrate",
+    "migrate:undo": "npx sequelize-cli db:migrate:undo",
+    "seed": "npx sequelize-cli db:seed:all",
+    "seed:undo": "npx sequelize-cli db:seed:undo",
+    "predev": "npm run migrate && npm run seed",
+    "dev": "nodemon src/server.js",
+    "worker:transactional": "node src/workers/transactionalWorker.js",
+    "worker:marketing": "node src/workers/marketingWorker.js",
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "movira",
+    "crm",
+    "communications",
+    "transactional",
+    "marketing"
+  ],
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1045.0",
+    "@aws-sdk/client-sesv2": "^3.1041.0",
+    "@aws-sdk/client-sns": "^3.1041.0",
+    "@aws-sdk/client-sqs": "^3.1041.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.1.0",
+    "ioredis": "^5.6.1",
+    "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^8.0.7",
+    "pg": "^8.14.1",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0",
+    "sequelize": "^6.37.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9",
+    "sequelize-cli": "^6.6.2"
+  }
+}

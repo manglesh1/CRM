@@ -1,0 +1,451 @@
+{
+  "info": {
+    "_postman_id": "44ad12ff-a2e0-4f10-91a9-b9368fb3b3f5",
+    "name": "Movira CRM API",
+    "description": "Postman collection for the Movira CRM communication service. Uses {{baseUrl}} as the service URL.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4100"
+    },
+    {
+      "key": "locationId",
+      "value": "1"
+    },
+    {
+      "key": "templateId",
+      "value": "replace-with-template-id"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": "{{baseUrl}}/health"
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"ok\": true,\n  \"service\": \"movira-crm\",\n  \"domains\": [\n    \"transactional\",\n    \"marketing\"\n  ]\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Transactional",
+      "item": [
+        {
+          "name": "GET /api/transactional/overview",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactional/overview",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactional", "overview"]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": "{{baseUrl}}/api/transactional/overview"
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"domain\": \"transactional\",\n    \"ownedByFrontend\": \"my-admin-app\",\n    \"queues\": [\n      \"transactional-critical\",\n      \"transactional-default\"\n    ],\n    \"status\": \"design-scaffold\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET /api/transactional/templates",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactional/templates?channel=email",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactional", "templates"],
+              "query": [
+                {
+                  "key": "channel",
+                  "value": "email"
+                }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": "{{baseUrl}}/api/transactional/templates?channel=email"
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"id\": \"uuid\",\n      \"locationId\": null,\n      \"key\": \"bookingConfirmation\",\n      \"channel\": \"email\",\n      \"name\": \"Booking confirmation\",\n      \"category\": \"booking\",\n      \"subject\": \"Your booking is confirmed at {{venueName}}\",\n      \"body\": \"<h1>Booking confirmed</h1>...\",\n      \"config\": {\n        \"contentType\": \"html\",\n        \"textFallback\": null\n      },\n      \"variables\": [\n        \"guestName\",\n        \"bookingNumber\",\n        \"venueName\",\n        \"bookingDate\",\n        \"totalAmount\",\n        \"paymentLink\"\n      ],\n      \"isSystem\": true,\n      \"isActive\": true,\n      \"createdAt\": \"2026-05-07T00:00:00.000Z\",\n      \"updatedAt\": \"2026-05-07T00:00:00.000Z\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET /api/transactional/templates/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transactional/templates/{{templateId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactional", "templates", "{{templateId}}"]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": "{{baseUrl}}/api/transactional/templates/{{templateId}}"
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": \"uuid\",\n    \"locationId\": null,\n    \"key\": \"bookingConfirmation\",\n    \"channel\": \"email\",\n    \"name\": \"Booking confirmation\",\n    \"category\": \"booking\",\n    \"subject\": \"Your booking is confirmed at {{venueName}}\",\n    \"body\": \"<h1>Booking confirmed</h1>...\",\n    \"config\": {\n      \"contentType\": \"html\",\n      \"textFallback\": null\n    },\n    \"variables\": [\n      \"guestName\",\n      \"bookingNumber\",\n      \"venueName\"\n    ],\n    \"isSystem\": true,\n    \"isActive\": true\n  }\n}"
+            },
+            {
+              "name": "404 Not Found",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": "{{baseUrl}}/api/transactional/templates/{{templateId}}"
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": false,\n  \"error\": \"Template not found\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /api/transactional/messages - Booking Confirmation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"locationId\": {{locationId}},\n  \"sourceSystem\": \"aeroSportsAdmin\",\n  \"sourceEventType\": \"booking.confirmation\",\n  \"sourceResourceType\": \"booking\",\n  \"sourceResourceId\": \"991\",\n  \"channel\": \"email\",\n  \"recipientAddress\": \"guest@example.com\",\n  \"templateKey\": \"bookingConfirmation\",\n  \"payload\": {\n    \"guestName\": \"Aarav\",\n    \"bookingNumber\": \"BK-991\",\n    \"venueName\": \"Movira London\",\n    \"bookingDate\": \"May 20, 2026\",\n    \"totalAmount\": \"$120.00\",\n    \"paymentLink\": \"\"\n  },\n  \"priority\": \"high\",\n  \"idempotencyKey\": \"booking.confirmation:991\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/transactional/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "transactional", "messages"]
+            }
+          },
+          "response": [
+            {
+              "name": "202 Accepted - queued or enqueue skipped locally",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                },
+                "url": "{{baseUrl}}/api/transactional/messages"
+              },
+              "status": "Accepted",
+              "code": 202,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"duplicate\": false,\n  \"data\": {\n    \"id\": \"uuid\",\n    \"status\": \"queued\",\n    \"channel\": \"email\",\n    \"priority\": \"high\",\n    \"templateKey\": \"bookingConfirmation\",\n    \"idempotencyKey\": \"booking.confirmation:991\",\n    \"enqueue\": {\n      \"skipped\": false,\n      \"sqsMessageId\": \"aws-sqs-message-id\"\n    }\n  }\n}"
+            },
+            {
+              "name": "202 Accepted - local missing queue URL",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                },
+                "url": "{{baseUrl}}/api/transactional/messages"
+              },
+              "status": "Accepted",
+              "code": 202,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"duplicate\": false,\n  \"data\": {\n    \"id\": \"uuid\",\n    \"status\": \"enqueue_skipped\",\n    \"channel\": \"email\",\n    \"priority\": \"high\",\n    \"templateKey\": \"bookingConfirmation\",\n    \"idempotencyKey\": \"booking.confirmation:991\",\n    \"enqueue\": {\n      \"skipped\": true,\n      \"reason\": \"missing_queue_url\",\n      \"body\": {\n        \"messageId\": \"uuid\",\n        \"domain\": \"transactional\",\n        \"channel\": \"email\",\n        \"priority\": \"high\"\n      }\n    }\n  }\n}"
+            },
+            {
+              "name": "200 OK - duplicate idempotency key",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                },
+                "url": "{{baseUrl}}/api/transactional/messages"
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"duplicate\": true,\n  \"data\": {\n    \"id\": \"existing-uuid\",\n    \"status\": \"queued\",\n    \"channel\": \"email\",\n    \"priority\": \"high\",\n    \"templateKey\": \"bookingConfirmation\",\n    \"idempotencyKey\": \"booking.confirmation:991\",\n    \"enqueue\": null\n  }\n}"
+            },
+            {
+              "name": "400 Bad Request",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{}"
+                },
+                "url": "{{baseUrl}}/api/transactional/messages"
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": false,\n  \"error\": \"locationId is required; sourceEventType is required; templateKey is required; idempotencyKey is required; recipientAddress is required\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Marketing",
+      "item": [
+        {
+          "name": "GET /api/marketing/overview",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/marketing/overview",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "marketing", "overview"]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": "{{baseUrl}}/api/marketing/overview"
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"domain\": \"marketing\",\n    \"futureFrontend\": \"movira-crm frontend\",\n    \"queues\": [\n      \"marketing-bulk\",\n      \"marketing-journey\"\n    ],\n    \"status\": \"design-scaffold\"\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "CRM Settings",
+      "item": [
+        {
+          "name": "GET /api/settings/email",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/settings/email?locationId={{locationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "settings", "email"],
+              "query": [
+                { "key": "locationId", "value": "{{locationId}}" }
+              ]
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/settings/email?locationId={{locationId}}" },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"defaultProvider\": { \"provider\": \"movira_ses\", \"label\": \"Movira SES\" },\n    \"providerOptions\": [],\n    \"providers\": [],\n    \"domains\": []\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /api/settings/email/domains",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"locationId\": {{locationId}},\n  \"domain\": \"mail.example.com\",\n  \"useCase\": \"marketing\",\n  \"domainType\": \"subdomain\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/settings/email/domains",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "settings", "email", "domains"]
+            }
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": { "method": "POST", "header": [], "url": "{{baseUrl}}/api/settings/email/domains" },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"domain\": \"mail.example.com\",\n    \"status\": \"pending_dns\",\n    \"dnsRecords\": []\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /api/settings/email/providers",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"locationId\": {{locationId}},\n  \"domain\": \"marketing\",\n  \"provider\": \"customer_smtp\",\n  \"displayName\": \"Customer SMTP\",\n  \"config\": {\n    \"host\": \"smtp.example.com\",\n    \"port\": \"587\",\n    \"username\": \"user\",\n    \"password\": \"secret\",\n    \"fromEmail\": \"hello@example.com\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/settings/email/providers",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "settings", "email", "providers"]
+            }
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": { "method": "POST", "header": [], "url": "{{baseUrl}}/api/settings/email/providers" },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"provider\": \"customer_smtp\",\n    \"displayName\": \"Customer SMTP\",\n    \"config\": { \"password\": \"********\" }\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "POST /api/webhooks/ses",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"Type\": \"Notification\",\n  \"Message\": \"{}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/webhooks/ses",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "webhooks", "ses"]
+            }
+          },
+          "response": [
+            {
+              "name": "501 Not Implemented",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": "{{baseUrl}}/api/webhooks/ses"
+              },
+              "status": "Not Implemented",
+              "code": 501,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": false,\n  \"error\": \"SES/SNS webhook ingestion is not implemented yet.\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST /api/webhooks/sms",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"MessageSid\": \"SMxxxx\",\n  \"MessageStatus\": \"delivered\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/webhooks/sms",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "webhooks", "sms"]
+            }
+          },
+          "response": [
+            {
+              "name": "501 Not Implemented",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": "{{baseUrl}}/api/webhooks/sms"
+              },
+              "status": "Not Implemented",
+              "code": 501,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": false,\n  \"error\": \"SMS status webhook ingestion is not implemented yet.\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
