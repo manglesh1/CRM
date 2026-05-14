@@ -1,6 +1,41 @@
 const marketingTrackingService = require("../marketing/tracking/service");
+const transactionalTracking = require("../transactional/tracking");
 const { Op } = require("sequelize");
 const { getModels } = require("../../db/models");
+
+const SES_EVENT_NORMALIZE = {
+  delivery: "delivered",
+  delivered: "delivered",
+  bounce: "bounce",
+  bounced: "bounce",
+  complaint: "complaint",
+  complained: "complaint",
+  open: "open",
+  opened: "open",
+  click: "click",
+  clicked: "click",
+  send: "sent",
+  sent: "sent",
+  reject: "failed",
+  "rendering failure": "failed",
+  rendering_failure: "failed",
+};
+
+function detectDomain(payload) {
+  const tags = payload?.mail?.tags || payload?.mail?.Tags || {};
+  const domain = tags.domain;
+  if (Array.isArray(domain) && domain[0]) return String(domain[0]).toLowerCase();
+  if (typeof domain === "string") return domain.toLowerCase();
+  return null;
+}
+
+function getTaggedMessageId(payload) {
+  const tags = payload?.mail?.tags || payload?.mail?.Tags || {};
+  const v = tags.message_id || tags.messageId;
+  if (Array.isArray(v) && v[0]) return v[0];
+  if (typeof v === "string") return v;
+  return null;
+}
 
 async function handleSesWebhook(body = {}) {
   const notification = unwrapSnsEnvelope(body);
@@ -17,11 +52,44 @@ async function handleSesWebhook(body = {}) {
     return { ignored: true, reason: "empty_payload" };
   }
 
-  const result = await marketingTrackingService.recordSesEvent(notification.payload);
-  return {
-    type: "ses_event",
-    result,
-  };
+  const payload = notification.payload;
+  const domainHint = detectDomain(payload);
+  const providerMessageId =
+    payload?.mail?.messageId ||
+    payload?.mail?.MessageId ||
+    payload?.mailMessageId ||
+    null;
+  const rawType = payload.eventType || payload.notificationType || payload.event_type;
+  const normalizedType = SES_EVENT_NORMALIZE[String(rawType || "").toLowerCase()] || null;
+
+  const taggedMessageId = getTaggedMessageId(payload);
+
+  if (domainHint === "transactional" && normalizedType) {
+    const result = await transactionalTracking.recordTransactionalSesEvent({
+      eventType: normalizedType,
+      providerMessageId,
+      taggedMessageId,
+      notification: payload,
+    });
+    if (result.matched) return { type: "ses_event", domain: "transactional", result };
+  }
+
+  const marketingResult = await marketingTrackingService.recordSesEvent(payload);
+  if (marketingResult && !marketingResult.ignored) {
+    return { type: "ses_event", domain: "marketing", result: marketingResult };
+  }
+
+  if (normalizedType) {
+    const fallback = await transactionalTracking.recordTransactionalSesEvent({
+      eventType: normalizedType,
+      providerMessageId,
+      taggedMessageId,
+      notification: payload,
+    });
+    if (fallback.matched) return { type: "ses_event", domain: "transactional", result: fallback };
+  }
+
+  return { type: "ses_event", domain: "unmatched", result: marketingResult };
 }
 
 async function listSimulatorMessages({ locationId, q, status, page = 1, pageSize = 25 } = {}) {

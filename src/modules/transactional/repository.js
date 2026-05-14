@@ -123,6 +123,42 @@ async function findTemplateById(id) {
   return TransactionalTemplate.findByPk(id);
 }
 
+async function findTemplateByKey({ locationId = null, key, channel = "email" }) {
+  const { TransactionalTemplate } = getModels();
+  const { Op } = require("sequelize");
+  return TransactionalTemplate.findOne({
+    where: {
+      locationId: locationId === null ? { [Op.is]: null } : locationId,
+      key,
+      channel,
+    },
+  });
+}
+
+async function createTemplate(data) {
+  const { TransactionalTemplate } = getModels();
+  return TransactionalTemplate.create(data);
+}
+
+async function updateTemplate(template, data) {
+  return template.update(data);
+}
+
+async function deleteTemplate(template) {
+  return template.destroy();
+}
+
+async function findBindingsForTemplate(templateKey) {
+  const { CrmEventTemplateBinding } = getModels();
+  return CrmEventTemplateBinding.findAll({
+    where: { templateKey },
+    order: [
+      ["eventType", "ASC"],
+      ["locationId", "ASC"],
+    ],
+  });
+}
+
 module.exports = {
   findByIdempotencyKey,
   createMessage,
@@ -135,4 +171,9 @@ module.exports = {
   createDeliveryEvent,
   listTemplates,
   findTemplateById,
+  findTemplateByKey,
+  createTemplate,
+  updateTemplate,
+  deleteTemplate,
+  findBindingsForTemplate,
 };

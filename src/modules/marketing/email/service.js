@@ -47,7 +47,7 @@ function validate(rules) {
 }
 
 const VALID_EDITOR_TYPES = ["design", "code", "plain"];
-const VALID_TEMPLATE_USE_CASES = ["transactional", "marketing", "both"];
+const VALID_TEMPLATE_USE_CASES = ["marketing"];
 const VALID_FOLDER_KINDS = ["campaign", "template"];
 const VALID_CAMPAIGN_STATUSES = ["draft", "scheduled", "sending", "sent", "paused", "failed", "cancelled"];
 const VALID_ASSET_TYPES = ["image", "logo", "background", "social", "other"];
@@ -716,12 +716,11 @@ async function listTemplates({ locationId, folderId, q, useCase } = {}) {
     where.folderId = folderId;
   }
   if (q) where.name = { [Op.iLike]: `%${q}%` };
-  // Use-case filter: when caller asks for "transactional" templates,
-  // return both pure-transactional rows AND any "both" templates that
-  // also serve transactional. Same idea for marketing.
-  if (useCase === "transactional") where.useCase = { [Op.in]: ["transactional", "both"] };
-  else if (useCase === "marketing") where.useCase = { [Op.in]: ["marketing", "both"] };
-  else if (useCase === "both") where.useCase = "both";
+  // Marketing table only stores marketing templates. Transactional
+  // templates live in crm_transactional_templates (separate API).
+  // The useCase column is retained for legacy filtering but new rows
+  // are always 'marketing'.
+  if (useCase) where.useCase = useCase;
   const rows = await CrmMarketingTemplate.findAll({
     where,
     order: [["updatedAt", "DESC"]],

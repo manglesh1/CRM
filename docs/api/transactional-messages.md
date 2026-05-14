@@ -1,14 +1,33 @@
 # Transactional Messages API
 
-## Create Message
+The transactional API handles direct message creation when a template key is already known. Most callers should use the **higher-level event ingestion** instead: see [notification-events.md](../notification-events.md).
 
-```txt
+## Endpoints overview
+
+```
+POST   /api/transactional/messages          Direct create (caller knows templateKey)
+GET    /api/transactional/templates         List templates
+GET    /api/transactional/templates/:id     Get one template
+POST   /api/transactional/templates         Create custom template
+PATCH  /api/transactional/templates/:id     Update template
+DELETE /api/transactional/templates/:id     Delete (non-system only)
+POST   /api/transactional/templates/:id/clone        Clone
+POST   /api/transactional/templates/:id/test-send    Send a test
+POST   /api/transactional/templates/render            Render a draft design with sample data
+```
+
+## Create message (low-level)
+
+```
 POST /api/transactional/messages
 ```
 
-Creates durable transactional message state and enqueues a small reference to SQS.
+Most callers should prefer `POST /api/notifications/events` so they don't need to know template keys. Use this endpoint only when:
 
-## Request
+- You're inside CRM itself (e.g. the events service calls into this)
+- You're scripting a one-off send with a known template
+
+### Request
 
 ```json
 {
@@ -25,12 +44,20 @@ Creates durable transactional message state and enqueues a small reference to SQ
     "bookingNumber": "BK-991",
     "venueName": "Movira London"
   },
+  "attachments": [
+    {
+      "filename": "invoice-BK-991.pdf",
+      "content": "<base64>",
+      "contentType": "application/pdf",
+      "encoding": "base64"
+    }
+  ],
   "priority": "high",
   "idempotencyKey": "booking.confirmation:991"
 }
 ```
 
-## Required Fields
+### Required fields
 
 - `locationId`
 - `sourceEventType`
@@ -39,38 +66,18 @@ Creates durable transactional message state and enqueues a small reference to SQ
 - `templateKey`
 - `idempotencyKey`
 
-## Template APIs
+### Channel validation
 
-```txt
-GET /api/transactional/templates
-GET /api/transactional/templates/:id
-```
+- `email`: recipient must be a valid email address
+- `sms` / `whatsapp`: recipient must be E.164 (e.g. `+14165551234`) — providers not yet wired
+- `push`: recipient must be present — providers not yet wired
 
-Optional filters:
+### Priority
 
-- `locationId`
-- `channel`
+- `critical` / `high` → routes to `transactional-critical` SQS queue
+- `normal` → routes to `transactional-default` SQS queue
 
-System template variables are documented in [../transactional-template-catalog.md](../transactional-template-catalog.md).
-
-## Channel Validation
-
-- `email`: recipient must be an email address.
-- `sms`: recipient must be E.164, for example `+14165551234`.
-- `whatsapp`: recipient must be E.164.
-- `push`: recipient must be present.
-
-## Priority
-
-Transactional priorities:
-
-- `critical`
-- `high`
-- `normal`
-
-`critical` and `high` route to the transactional critical SQS queue. `normal` routes to the transactional default SQS queue.
-
-## Response
+### Response (202)
 
 ```json
 {
@@ -83,28 +90,141 @@ Transactional priorities:
     "priority": "high",
     "templateKey": "bookingConfirmation",
     "idempotencyKey": "booking.confirmation:991",
-    "enqueue": {
-      "skipped": false,
-      "sqsMessageId": "..."
-    }
+    "enqueue": { "skipped": false, "sqsMessageId": "..." }
   }
 }
 ```
 
-If the same `idempotencyKey` is used again, the API returns the existing message with `duplicate: true`.
+Duplicate `idempotencyKey` → HTTP 200, `duplicate: true`, existing messageId returned.
 
-## Local Development
+## Attachments
 
-If SQS URLs are missing, the row is still created and marked `enqueue_skipped`. This keeps local development possible without AWS credentials. Production must configure real SQS URLs.
+Attachments are stored on the message row (`attachments` JSONB column) and applied at send time via SES MIME (`SendEmailCommand` with `Content.Raw`).
 
-Run the Sequelize migration before testing:
+Per-attachment shape:
+
+```json
+{
+  "filename": "invoice.pdf",
+  "content": "<base64 encoded bytes>",
+  "contentType": "application/pdf",
+  "encoding": "base64"
+}
+```
+
+aeroSportsAdmin's [crmNotify helper](../../../aeroSportsAdmin/services/crmNotify/index.js) accepts native `Buffer` content and base64-encodes automatically before calling the API.
+
+**Limits to keep in mind:**
+
+- SES has a 40 MB raw message size limit (after encoding overhead)
+- DB JSONB column has practical limits — keep individual attachments small
+- For files larger than ~5 MB, consider S3 + a link in the email body instead
+
+## Template CRUD
+
+### List
+
+```
+GET /api/transactional/templates?channel=email&includeBindings=true
+```
+
+Query params:
+
+- `channel` — defaults to all; pass `email` to filter
+- `locationId` — include tenant overrides for this location + system defaults
+- `includeBindings` — include `bindings[]` per template showing which events fire it
+
+### Create
+
+```json
+POST /api/transactional/templates
+
+{
+  "key": "bookingConfirmationVip",
+  "name": "VIP Booking Confirmation",
+  "channel": "email",
+  "editorType": "design",
+  "family": "booking",
+  "subject": "Your VIP visit at {{venueName}} is confirmed",
+  "designJson": { ... },
+  "description": "VIP guests booking confirmation",
+  "variables": ["guestName", "bookingNumber", "venueName"]
+}
+```
+
+`key` must be unique per `(locationId, channel)` and alphanumeric with hyphens/underscores. System templates' keys cannot be changed.
+
+### Update / Delete / Clone
+
+```
+PATCH  /templates/:id           {body fields to update}
+DELETE /templates/:id            System templates protected; templates with active bindings protected
+POST   /templates/:id/clone     {key: "new-slug", name: "..."}    optional fields
+POST   /templates/:id/test-send  {to, data, subject?}
+```
+
+`test-send` uses the stored template, renders with the provided `data`, and sends via SES.
+
+### Render draft
+
+```
+POST /api/transactional/templates/render
+
+{
+  "name": "Preview",
+  "subject": "Welcome {{name}}",
+  "editorType": "design",
+  "designJson": { ... },
+  "data": { "name": "Yogesh" }
+}
+```
+
+Returns `{ subject, html, text }`. Useful for builder preview before saving.
+
+## Delivery tracking (SES webhooks)
+
+When SES sends an email, it includes `EmailTags`:
+
+```
+{ domain: "transactional", message_id: "<uuid>" }
+```
+
+When AWS SES bounces/delivers/etc., it publishes to SNS → `POST /api/webhooks/ses`. The handler:
+
+1. Detects `domain` tag → routes to transactional or marketing pipeline
+2. Looks up the message by `message_id` tag (or `providerMessageId` fallback)
+3. Updates `crm_transactional_messages`:
+   - `delivered` → `status: delivered`, `deliveredAt` set
+   - `bounce` → `status: failed`, `lastError: "bounce: <reason>"`, `failedAt` set
+4. Inserts a row into `crm_transactional_delivery_events` with the full SES payload
+
+Marketing path is similar but uses `crm_marketing_messages` and `crm_marketing_delivery_events`.
+
+## Audit logging
+
+Every template + binding change is recorded in `crm_audit_logs`:
+
+| Entity type | Actions logged |
+|---|---|
+| `transactional_template` | `template.create`, `template.update`, `template.delete`, `template.clone` |
+| `notification_binding` | `binding.create`, `binding.update`, `binding.delete` |
+
+Entry includes: actor (when available), entity name, changed fields, metadata.
+
+## Local development
+
+Without SQS URLs configured, the row is created with `status: enqueue_skipped`. This is by design — the binding lookup, template resolution, variable mapping, and attachment storage all happen and are inspectable in DB. Add `AWS_SQS_TRANSACTIONAL_CRITICAL_URL` + `AWS_SQS_TRANSACTIONAL_DEFAULT_URL` to actually enqueue, plus run `npm run worker:transactional` for the worker to dispatch.
 
 ```bash
 npm run migrate
+npm run seed       # loads 33 system templates + 6 default bindings
+npm run dev        # API
+npm run worker:transactional   # worker (separate terminal)
 ```
 
-Run the transactional worker:
+## Related docs
 
-```bash
-npm run worker:transactional
-```
+- [Notification events (the higher-level routing layer)](../notification-events.md)
+- [Template catalog (all 33 system templates)](../transactional-template-catalog.md)
+- [Marketing module](../marketing.md)
+- [Admin UI structure](../settings.md)

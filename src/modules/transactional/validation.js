@@ -32,6 +32,17 @@ function validateCreateMessage(body = {}) {
   const recipientError = validateRecipient(channel, body.recipientAddress);
   if (recipientError) errors.push(recipientError);
 
+  const attachments = Array.isArray(body.attachments)
+    ? body.attachments
+        .map((a) => ({
+          filename: a.filename ? String(a.filename) : "attachment",
+          content: a.content ? String(a.content) : "",
+          contentType: a.contentType ? String(a.contentType) : "application/octet-stream",
+          encoding: a.encoding ? String(a.encoding) : "base64",
+        }))
+        .filter((a) => a.content)
+    : [];
+
   return {
     ok: errors.length === 0,
     errors,
@@ -46,6 +57,7 @@ function validateCreateMessage(body = {}) {
       templateKey: String(body.templateKey || "").trim(),
       templateVersionId: body.templateVersionId || null,
       payload: body.payload && typeof body.payload === "object" ? body.payload : {},
+      attachments,
       priority,
       idempotencyKey: String(body.idempotencyKey || "").trim(),
     },

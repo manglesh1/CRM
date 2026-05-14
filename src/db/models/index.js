@@ -18,6 +18,7 @@ const defineCrmMarketingTemplateRevision = require("./CrmMarketingTemplateRevisi
 const defineCrmMarketingSuppression = require("./CrmMarketingSuppression");
 const defineCrmMarketingWorkerHeartbeat = require("./CrmMarketingWorkerHeartbeat");
 const defineCrmAuditLog = require("./CrmAuditLog");
+const defineCrmEventTemplateBinding = require("./CrmEventTemplateBinding");
 
 let models = null;
 
@@ -43,6 +44,7 @@ function getModels() {
   const CrmMarketingSuppression = defineCrmMarketingSuppression(sequelize);
   const CrmMarketingWorkerHeartbeat = defineCrmMarketingWorkerHeartbeat(sequelize);
   const CrmAuditLog = defineCrmAuditLog(sequelize);
+  const CrmEventTemplateBinding = defineCrmEventTemplateBinding(sequelize);
 
   CrmMarketingFolder.hasMany(CrmMarketingTemplate, { foreignKey: "folderId", as: "templates" });
   CrmMarketingTemplate.belongsTo(CrmMarketingFolder, { foreignKey: "folderId", as: "folder" });
@@ -104,6 +106,7 @@ function getModels() {
     CrmMarketingSuppression,
     CrmMarketingWorkerHeartbeat,
     CrmAuditLog,
+    CrmEventTemplateBinding,
   };
   return models;
 }

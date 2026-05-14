@@ -9,6 +9,9 @@ const ALLOWED_ENTITY_TYPES = new Set([
   "marketing_snippet",
   "marketing_suppression",
   "marketing_folder",
+  "transactional_template",
+  "transactional_message",
+  "notification_binding",
   "system",
 ]);
 

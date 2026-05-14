@@ -23,6 +23,7 @@ function defineTransactionalMessage(sequelize) {
       templateKey: { type: DataTypes.STRING(150), allowNull: false },
       templateVersionId: { type: DataTypes.UUID, allowNull: true },
       payload: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
+      attachments: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
       priority: {
         type: DataTypes.STRING(20),
         allowNull: false,
