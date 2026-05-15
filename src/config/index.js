@@ -47,6 +47,17 @@ const config = {
       publicBaseUrl: process.env.S3_MARKETING_ASSETS_PUBLIC_BASE_URL || "",
     },
   },
+  email: {
+    provider: (process.env.EMAIL_PROVIDER || "ses").toLowerCase(),
+    smtp: {
+      host: process.env.SMTP_HOST || "smtp.gmail.com",
+      port: Number(process.env.SMTP_PORT || 465),
+      secure: String(process.env.SMTP_SECURE || "true").toLowerCase() !== "false",
+      user: process.env.SMTP_USER || process.env.EMAIL_FROM || "",
+      pass: process.env.SMTP_PASS || process.env.EMAIL_PASSWORD || "",
+      from: process.env.EMAIL_FROM || process.env.SMTP_USER || "",
+    },
+  },
   marketing: {
     rateLimits: {
       perMinute: Number(process.env.MARKETING_SEND_RATE_PER_MINUTE || 60),

@@ -1,8 +1,55 @@
 const { SESv2Client, SendEmailCommand } = require("@aws-sdk/client-sesv2");
+const nodemailer = require("nodemailer");
 const MailComposer = require("nodemailer/lib/mail-composer");
 const config = require("../../../config");
 
 let client = null;
+let smtpTransporter = null;
+
+function shouldUseSmtp() {
+  return config.email?.provider === "smtp";
+}
+
+function getSmtpTransporter() {
+  if (!smtpTransporter) {
+    const smtp = config.email.smtp;
+    if (!smtp.user || !smtp.pass) {
+      throw new Error("SMTP email is enabled but SMTP_USER/EMAIL_FROM or SMTP_PASS/EMAIL_PASSWORD is missing.");
+    }
+    smtpTransporter = nodemailer.createTransport({
+      host: smtp.host,
+      port: smtp.port,
+      secure: smtp.secure,
+      auth: {
+        user: smtp.user,
+        pass: smtp.pass,
+      },
+    });
+  }
+  return smtpTransporter;
+}
+
+async function sendSmtpEmail({ to, subject, html, text, from, attachments = [] }) {
+  const smtp = config.email.smtp;
+  const fromAddress = from || smtp.from || smtp.user;
+  const result = await getSmtpTransporter().sendMail({
+    from: fromAddress,
+    to,
+    subject: subject || "",
+    html: html || "",
+    text: text || stripHtml(html || ""),
+    attachments: (attachments || []).map((a) => ({
+      filename: a.filename,
+      content: a.content,
+      contentType: a.contentType || undefined,
+      encoding: a.encoding || undefined,
+    })),
+  });
+  return {
+    provider: "smtp",
+    providerMessageId: result.messageId,
+  };
+}
 
 function getClient() {
   if (!client) {
@@ -34,6 +81,10 @@ function buildRawMime({ from, to, subject, html, text, attachments }) {
 }
 
 async function sendTransactionalEmail({ to, subject, html, text, from, attachments = [], messageId }) {
+  if (shouldUseSmtp()) {
+    return sendSmtpEmail({ to, subject, html, text, from, attachments });
+  }
+
   const fromAddress = from || config.aws.ses.defaultFrom;
   const tags = [{ Name: "domain", Value: "transactional" }];
   if (messageId) tags.push({ Name: "message_id", Value: String(messageId).slice(0, 256) });
@@ -93,6 +144,10 @@ async function sendTransactionalEmail({ to, subject, html, text, from, attachmen
 }
 
 async function sendMarketingEmail({ to, subject, html, text, from, trackingTags = [] }) {
+  if (shouldUseSmtp()) {
+    return sendSmtpEmail({ to, subject, html, text, from });
+  }
+
   const command = new SendEmailCommand({
     FromEmailAddress: from || config.aws.ses.defaultFrom,
     ConfigurationSetName: config.aws.ses.marketingConfigSet,
