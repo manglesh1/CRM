@@ -3,6 +3,7 @@ const { getModels } = require("../../../db/models");
 const { PROVIDER_OPTIONS } = require("./providerCatalog");
 const { verifyDomainRecords } = require("../../../shared/emailDnsVerifier");
 const { UNVERIFIED_TTL_DAYS } = require("../../../workers/unverifiedDomainCleaner");
+const emailProvider = require("../../messaging-core/providers/emailProviderRouter");
 
 const ROUTE_DEFINITIONS = [
   { routeKey: "calendar", label: "Calendar Domain" },
@@ -334,11 +335,36 @@ async function testProvider(id, body = {}) {
     err.statusCode = 404;
     throw err;
   }
-  await row.update({
-    lastTestedAt: new Date(),
-    lastTestError: body.to ? null : "Test recipient is required before sending a live test.",
-  });
-  return serializeProvider(row);
+  if (!isEmail(body.to)) {
+    await row.update({
+      lastTestedAt: new Date(),
+      lastTestError: "A valid test recipient is required before sending a live test.",
+    });
+    return serializeProvider(row);
+  }
+
+  try {
+    await emailProvider.sendWithProviderRow(
+      row,
+      {
+        locationId: row.locationId,
+        to: String(body.to).trim(),
+        subject: body.subject || `Movira provider test: ${row.displayName}`,
+        html:
+          body.html ||
+          `<p>This is a Movira CRM test email for <strong>${row.displayName}</strong>.</p>`,
+        text: body.text || `This is a Movira CRM test email for ${row.displayName}.`,
+      },
+      row.domain === "marketing" ? "marketing" : "transactional"
+    );
+    await row.update({ lastTestedAt: new Date(), lastTestError: null });
+  } catch (err) {
+    await row.update({
+      lastTestedAt: new Date(),
+      lastTestError: err?.message || "Provider test failed.",
+    });
+  }
+  return serializeProvider(await CrmProviderConfig.findByPk(id));
 }
 
 async function deleteProvider(id) {

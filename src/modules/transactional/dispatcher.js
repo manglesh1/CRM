@@ -1,5 +1,5 @@
 const renderer = require("./templateRenderer");
-const sesEmailProvider = require("../messaging-core/providers/sesEmailProvider");
+const emailProvider = require("../messaging-core/providers/emailProviderRouter");
 
 async function dispatch(message) {
   if (message.channel !== "email") {
@@ -14,7 +14,8 @@ async function dispatch(message) {
       : a.content,
     contentType: a.contentType || undefined,
   }));
-  return sesEmailProvider.sendTransactionalEmail({
+  return emailProvider.sendTransactionalEmail({
+    locationId: message.locationId,
     to: message.recipientAddress,
     subject: rendered.subject,
     html: rendered.body,

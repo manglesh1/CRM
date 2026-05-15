@@ -377,6 +377,10 @@ router.get("/templates/builder/catalog", (_req, res) => {
   res.json({ success: true, data: service.getTemplateBuilderCatalog() });
 });
 
+router.get("/merge-tags", (req, res) => {
+  res.json({ success: true, data: service.getMergeTagCatalog(req.query || {}) });
+});
+
 router.get("/templates", async (req, res, next) => {
   try {
     const data = await service.listTemplates(req.query);

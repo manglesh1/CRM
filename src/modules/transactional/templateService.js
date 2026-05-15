@@ -1,6 +1,6 @@
 const repository = require("./repository");
 const { renderTemplate } = require("./templateRenderer");
-const sesEmailProvider = require("../messaging-core/providers/sesEmailProvider");
+const emailProvider = require("../messaging-core/providers/emailProviderRouter");
 const auditService = require("../audit/service");
 
 async function safeAudit(input) {
@@ -345,21 +345,29 @@ async function cloneTemplate(id, body = {}, user) {
   return serializeTemplate(clone);
 }
 
-async function testSendTemplate(id, { to, data, subject } = {}) {
+async function testSendTemplate(id, { to, data, subject, from, locationId } = {}) {
   if (!to) throw httpError(400, "'to' is required");
   const row = await repository.findTemplateById(id);
   if (!row) throw httpError(404, "Template not found");
 
   const samplePayload = data && typeof data === "object" ? data : {};
   const rendered = renderTemplate(row, samplePayload);
+  const effectiveLocationId =
+    row.locationId || (locationId === null || locationId === undefined || locationId === "" ? null : Number(locationId));
 
-  const result = await sesEmailProvider.sendTransactionalEmail({
-    to,
-    subject: subject || `[Test] ${rendered.subject || row.name}`,
-    html: rendered.body,
-    text: rendered.text || row.config?.textFallback,
-    from: row.config?.from,
-  });
+  let result;
+  try {
+    result = await emailProvider.sendTransactionalEmail({
+      locationId: effectiveLocationId,
+      to,
+      subject: subject || `[Test] ${rendered.subject || row.name}`,
+      html: rendered.body,
+      text: rendered.text || row.config?.textFallback,
+      from: from || row.config?.from,
+    });
+  } catch (err) {
+    throw httpError(502, err?.message || "Email provider test send failed");
+  }
 
   return {
     sent: true,

@@ -1,6 +1,6 @@
 const config = require("../../../config");
 const { getModels } = require("../../../db/models");
-const sesEmailProvider = require("../../messaging-core/providers/sesEmailProvider");
+const emailProvider = require("../../messaging-core/providers/emailProviderRouter");
 const { renderDesign, interpolate } = require("./builder/renderer");
 const { createDefaultDesign } = require("./builder/defaultDesign");
 
@@ -40,7 +40,8 @@ async function dispatch(message) {
   const from = payload.from || undefined;
   const rendered = renderMessageTemplate(message, template, { tracking: trackingUrls(message.id) });
 
-  return sesEmailProvider.sendMarketingEmail({
+  return emailProvider.sendMarketingEmail({
+    locationId: message.locationId,
     to: message.recipient,
     subject: rendered.subject,
     html: rendered.html,

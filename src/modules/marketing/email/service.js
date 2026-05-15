@@ -12,8 +12,9 @@ const { getModels } = require("../../../db/models");
 const { createDefaultDesign } = require("./builder/defaultDesign");
 const { renderDesign } = require("./builder/renderer");
 const { getBuilderCatalog } = require("./builder/catalog");
+const { getMergeTagCatalog } = require("./builder/mergeTags");
 const { validateDesign } = require("./builder/schema");
-const sesEmailProvider = require("../../messaging-core/providers/sesEmailProvider");
+const emailProvider = require("../../messaging-core/providers/emailProviderRouter");
 const { enqueueMarketingMessage } = require("../../messaging-core/aws/sqsClient");
 const { uploadMarketingAsset } = require("./assetUpload");
 const marketingMessageRepository = require("./messageRepository");
@@ -892,9 +893,10 @@ async function sendTestTemplate(id, { to, subject, data, from } = {}) {
     ? renderDesign(template.designJson || createDefaultDesign(), { title: template.name, data: data || {} }).html
     : template.htmlBody || "";
   const send = template.useCase === "transactional"
-    ? sesEmailProvider.sendTransactionalEmail
-    : sesEmailProvider.sendMarketingEmail;
+    ? emailProvider.sendTransactionalEmail
+    : emailProvider.sendMarketingEmail;
   const result = await send({
+    locationId: template.locationId,
     to: String(to).trim(),
     subject: subject || `[Test] ${template.name}`,
     html: htmlBody,
@@ -936,9 +938,10 @@ async function sendTestDraftTemplate({ to, subject, name = "Draft email", useCas
   validate(templateValidation.errors.map((issue) => ({ field: issue.key, message: issue.message })));
   const rendered = renderDesign(designJson || createDefaultDesign(), { title: name, data: data || {} });
   const send = useCase === "transactional"
-    ? sesEmailProvider.sendTransactionalEmail
-    : sesEmailProvider.sendMarketingEmail;
+    ? emailProvider.sendTransactionalEmail
+    : emailProvider.sendMarketingEmail;
   const result = await send({
+    locationId: null,
     to: String(to).trim(),
     subject,
     html: rendered.html,
@@ -1864,6 +1867,7 @@ async function getStatistics(query = {}) {
 
 module.exports = {
   getTemplateBuilderCatalog,
+  getMergeTagCatalog,
   validateTemplateBeforeSend,
   // folders
   listFolders,
