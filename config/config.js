@@ -5,10 +5,30 @@ const base = {
   logging: false,
 };
 
+function shouldUseSsl() {
+  const value = String(process.env.DB_SSL || "").toLowerCase();
+  if (["false", "0", "no", "disable"].includes(value)) return false;
+  if (["true", "1", "yes", "require"].includes(value)) return true;
+  return process.env.NODE_ENV === "production";
+}
+
+function sslOptions() {
+  if (!shouldUseSsl()) return {};
+  return {
+    dialectOptions: {
+      ssl: {
+        require: true,
+        rejectUnauthorized: false,
+      },
+    },
+  };
+}
+
 function fromUrl() {
   return {
     use_env_variable: "DATABASE_URL",
     ...base,
+    ...sslOptions(),
   };
 }
 
@@ -19,6 +39,7 @@ function fromParts() {
     database: process.env.DB_NAME || "trampoline_booking_db",
     host: process.env.DB_HOST || "127.0.0.1",
     ...base,
+    ...sslOptions(),
   };
 }
 
