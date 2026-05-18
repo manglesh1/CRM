@@ -94,7 +94,20 @@ jobs:
           pm2 restart movira-crm --update-env || pm2 start src/server.js --name movira-crm --time
           pm2 save
           systemctl restart nginx
-          curl -fsS http://127.0.0.1:4100/health
+
+          echo "Waiting for movira-crm health check..."
+          attempt=1
+          until curl -fsS http://127.0.0.1:4100/health; do
+            if [ "\$attempt" -ge 30 ]; then
+              echo "movira-crm health check failed after \$attempt attempts"
+              pm2 status movira-crm || true
+              pm2 logs movira-crm --lines 120 --nostream || true
+              exit 1
+            fi
+            echo "movira-crm is not ready yet; retrying (\$attempt/30)..."
+            attempt=\$((attempt + 1))
+            sleep 2
+          done
           REMOTE
 
           jq -n --rawfile script /tmp/movira-crm-remote.sh '{commands: [$script]}' \
