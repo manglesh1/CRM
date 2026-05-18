@@ -5,6 +5,7 @@ const { STATUS } = require("./constants");
 
 function shouldProcessInline(enqueue) {
   if (!enqueue?.skipped || enqueue.reason !== "missing_queue_url") return false;
+  if (process.env.TRANSACTIONAL_INLINE_ON_MISSING_QUEUE === "true") return true;
   if (process.env.TRANSACTIONAL_INLINE_ON_MISSING_QUEUE === "false") return false;
   return process.env.NODE_ENV !== "production";
 }
@@ -13,8 +14,9 @@ function shouldRecoverSkippedMessage(message) {
   return (
     message?.status === STATUS.ENQUEUE_SKIPPED &&
     message?.lastError === "missing_queue_url" &&
-    process.env.TRANSACTIONAL_INLINE_ON_MISSING_QUEUE !== "false" &&
-    process.env.NODE_ENV !== "production"
+    (process.env.TRANSACTIONAL_INLINE_ON_MISSING_QUEUE === "true" ||
+      (process.env.TRANSACTIONAL_INLINE_ON_MISSING_QUEUE !== "false" &&
+        process.env.NODE_ENV !== "production"))
   );
 }
 
