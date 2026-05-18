@@ -4,7 +4,6 @@
 // linger forever and block re-adding the same domain. Default: 30 days.
 //
 // Self-scheduling: kicks off once on import, then runs every
-// SWEEP_INTERVAL_HOURS. No external cron dependency.
 
 const { Op } = require("sequelize");
 const { getModels } = require("../db/models");
