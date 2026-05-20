@@ -1,5 +1,5 @@
 const repository = require("./repository");
-const { renderDesign } = require("../marketing/email/builder/renderer");
+const { renderDesign, applyTracking } = require("../marketing/email/builder/renderer");
 const { createDefaultDesign } = require("../marketing/email/builder/defaultDesign");
 
 const TOKEN_RE = /\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g;
@@ -18,14 +18,14 @@ function interpolate(input, payload) {
   });
 }
 
-function renderTemplate(template, payload) {
+function renderTemplate(template, payload, { tracking = null } = {}) {
   const subject = interpolate(template.subject, payload);
 
   if (template.editorType === "design") {
     const rendered = renderDesign(template.designJson || createDefaultDesign(), {
       title: template.name,
       data: payload || {},
-      tracking: null,
+      tracking,
     });
     return {
       subject,
@@ -37,13 +37,13 @@ function renderTemplate(template, payload) {
 
   return {
     subject,
-    body: interpolate(template.body, payload),
+    body: applyTracking(interpolate(template.body, payload), tracking),
     text: interpolate(template.plainText, payload),
     template,
   };
 }
 
-async function renderTransactionalMessage(message) {
+async function renderTransactionalMessage(message, options = {}) {
   const template = await repository.findTemplate({
     locationId: message.locationId,
     key: message.templateKey,
@@ -56,7 +56,7 @@ async function renderTransactionalMessage(message) {
     );
   }
 
-  return renderTemplate(template, message.payload);
+  return renderTemplate(template, message.payload, options);
 }
 
 module.exports = {

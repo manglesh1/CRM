@@ -1,6 +1,7 @@
 const express = require("express");
 const transactionalService = require("./service");
 const templateService = require("./templateService");
+const operationsService = require("./operationsService");
 
 const router = express.Router();
 
@@ -14,6 +15,60 @@ router.get("/overview", (_req, res) => {
       status: "design-scaffold",
     },
   });
+});
+
+router.get("/queue-monitoring", async (req, res, next) => {
+  try {
+    const data = await operationsService.getQueueMonitoring(req.query || {});
+    res.json({ success: true, data });
+  } catch (err) {
+    handleError(err, res, next);
+  }
+});
+
+router.get("/sqs-worker-verification", async (_req, res, next) => {
+  try {
+    const data = await operationsService.getWorkerVerification();
+    res.json({ success: true, data });
+  } catch (err) {
+    handleError(err, res, next);
+  }
+});
+
+router.post("/sqs-worker-verification/probe", async (req, res, next) => {
+  try {
+    const data = await operationsService.probeQueues(req.body || {});
+    res.json({ success: true, data });
+  } catch (err) {
+    handleError(err, res, next);
+  }
+});
+
+router.get("/failed-messages", async (req, res, next) => {
+  try {
+    const data = await operationsService.listFailedMessages(req.query || {});
+    res.json({ success: true, data });
+  } catch (err) {
+    handleError(err, res, next);
+  }
+});
+
+router.post("/failed-messages/retry", async (req, res, next) => {
+  try {
+    const data = await operationsService.retryFailedMessages(req.body || {});
+    res.json({ success: true, data });
+  } catch (err) {
+    handleError(err, res, next);
+  }
+});
+
+router.post("/messages/retry-recoverable", async (req, res, next) => {
+  try {
+    const data = await operationsService.retryRecoverableMessages(req.body || {});
+    res.json({ success: true, data });
+  } catch (err) {
+    handleError(err, res, next);
+  }
 });
 
 function handleError(err, res, next) {
@@ -120,6 +175,15 @@ router.post("/messages", async (req, res, next) => {
       });
     }
     return next(err);
+  }
+});
+
+router.post("/messages/:id/retry", async (req, res, next) => {
+  try {
+    const data = await operationsService.retryMessage(req.params.id, req.body || {});
+    res.json({ success: true, data });
+  } catch (err) {
+    handleError(err, res, next);
   }
 });
 

@@ -1,6 +1,6 @@
 const repository = require("./repository");
 const { renderTemplate } = require("./templateRenderer");
-const emailProvider = require("../messaging-core/providers/emailProviderRouter");
+const transactionalService = require("./service");
 const auditService = require("../audit/service");
 
 async function safeAudit(input) {
@@ -351,28 +351,46 @@ async function testSendTemplate(id, { to, data, subject, from, locationId } = {}
   if (!row) throw httpError(404, "Template not found");
 
   const samplePayload = data && typeof data === "object" ? data : {};
-  const rendered = renderTemplate(row, samplePayload);
   const effectiveLocationId =
     row.locationId || (locationId === null || locationId === undefined || locationId === "" ? null : Number(locationId));
+  if (!effectiveLocationId) {
+    throw httpError(400, "locationId is required for transactional test sends.");
+  }
 
-  let result;
+  const payload = {
+    ...samplePayload,
+    __test: {
+      templateId: row.id,
+      requestedSubject: subject || null,
+      requestedFrom: from || null,
+    },
+  };
+
+  let queued;
   try {
-    result = await emailProvider.sendTransactionalEmail({
+    queued = await transactionalService.enqueueMessage({
       locationId: effectiveLocationId,
-      to,
-      subject: subject || `[Test] ${rendered.subject || row.name}`,
-      html: rendered.body,
-      text: rendered.text || row.config?.textFallback,
-      from: from || row.config?.from,
+      sourceSystem: "movira-crm",
+      sourceEventType: "transactional_template_test_send",
+      sourceResourceType: "transactional_template",
+      sourceResourceId: row.id,
+      channel: "email",
+      recipientAddress: to,
+      templateKey: row.key,
+      payload,
+      priority: "normal",
+      idempotencyKey: `transactional-template-test:${row.id}:${to}:${Date.now()}`,
     });
   } catch (err) {
-    throw httpError(502, err?.message || "Email provider test send failed");
+    if (err.statusCode) throw err;
+    throw httpError(502, err?.message || "Transactional test send queue failed");
   }
 
   return {
-    sent: true,
-    provider: result?.provider || "ses",
-    providerMessageId: result?.providerMessageId || null,
+    queued: true,
+    status: queued?.message?.status || null,
+    messageId: queued?.message?.id || null,
+    enqueue: queued?.enqueue || null,
   };
 }
 

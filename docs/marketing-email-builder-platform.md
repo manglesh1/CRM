@@ -1,6 +1,6 @@
 # Marketing Email Builder Platform
 
-This document is the implementation contract for the GoHighLevel-style email builder inside `movira-crm`.
+This document is the implementation contract for the advanced email builder inside `movira-crm`.
 
 ## Ownership
 

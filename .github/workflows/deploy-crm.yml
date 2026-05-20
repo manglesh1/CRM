@@ -92,6 +92,8 @@ jobs:
           npx sequelize-cli db:migrate
           npx sequelize-cli db:seed:all
           pm2 restart movira-crm --update-env || pm2 start src/server.js --name movira-crm --time
+          pm2 restart movira-crm-transactional-worker --update-env || pm2 start src/workers/transactionalWorker.js --name movira-crm-transactional-worker --time
+          pm2 restart movira-crm-marketing-worker --update-env || pm2 start src/workers/marketingWorker.js --name movira-crm-marketing-worker --time
           pm2 save
           systemctl restart nginx
 

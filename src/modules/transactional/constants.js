@@ -22,6 +22,7 @@ const DELIVERY_EVENT = {
   COMPLAINED: "complained",
   OPENED: "opened",
   CLICKED: "clicked",
+  UNSUBSCRIBED: "unsubscribed",
 };
 
 module.exports = {

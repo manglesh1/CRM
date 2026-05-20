@@ -54,7 +54,13 @@ async function sendWithProviderRow(providerRow, input = {}, useCase = providerUs
     return sendCustomerSes(providerRow, cfg, input, useCase);
   }
   if (providerRow.provider === "customer_sendgrid") {
-    return sendSendgrid(providerRow, cfg, input);
+    return sendSendgrid(providerRow, cfg, input, useCase);
+  }
+  if (providerRow.provider === "customer_mailgun") {
+    return sendMailgun(providerRow, cfg, input, useCase);
+  }
+  if (providerRow.provider === "customer_postmark") {
+    return sendPostmark(providerRow, cfg, input, useCase);
   }
 
   return useCase === "transactional"
@@ -127,7 +133,7 @@ async function sendCustomerSes(providerRow, cfg, input, useCase) {
   };
 }
 
-async function sendSendgrid(providerRow, cfg, input) {
+async function sendSendgrid(providerRow, cfg, input, useCase = providerUseCase(providerRow?.domain)) {
   if (typeof fetch !== "function") {
     throw new Error("SendGrid provider requires Node 18+ fetch support.");
   }
@@ -141,6 +147,14 @@ async function sendSendgrid(providerRow, cfg, input) {
       personalizations: [{ to: [{ email: input.to }] }],
       from: { email: input.from || cfg.fromEmail || config.aws.ses.defaultFrom },
       subject: input.subject || "",
+      custom_args: {
+        domain: useCase,
+        ...(input.messageId ? { message_id: String(input.messageId) } : {}),
+        ...(input.trackingTags || []).reduce((acc, tag) => {
+          acc[String(tag.name).slice(0, 120)] = String(tag.value).slice(0, 500);
+          return acc;
+        }, {}),
+      },
       content: [
         { type: "text/plain", value: input.text || stripHtml(input.html || "") },
         { type: "text/html", value: input.html || input.text || "" },
@@ -156,6 +170,120 @@ async function sendSendgrid(providerRow, cfg, input) {
     providerConfigId: providerRow.id,
     providerMessageId: res.headers.get("x-message-id") || null,
   };
+}
+
+async function sendMailgun(providerRow, cfg, input, useCase) {
+  if (typeof fetch !== "function" || typeof FormData !== "function") {
+    throw new Error("Mailgun provider requires Node 18+ fetch/FormData support.");
+  }
+  const form = new FormData();
+  form.append("from", input.from || cfg.fromEmail || config.aws.ses.defaultFrom);
+  form.append("to", input.to);
+  form.append("subject", input.subject || "");
+  form.append("html", input.html || input.text || "");
+  form.append("text", input.text || stripHtml(input.html || ""));
+  form.append("v:domain", useCase);
+  if (input.messageId) form.append("v:message_id", String(input.messageId));
+  for (const tag of input.trackingTags || []) {
+    form.append(`v:${String(tag.name).slice(0, 120)}`, String(tag.value).slice(0, 500));
+  }
+  for (const attachment of input.attachments || []) {
+    const content = Buffer.isBuffer(attachment.content)
+      ? attachment.content
+      : Buffer.from(String(attachment.content || ""), attachment.encoding === "base64" ? "base64" : "utf8");
+    form.append(
+      "attachment",
+      new Blob([content], { type: attachment.contentType || "application/octet-stream" }),
+      attachment.filename || "attachment"
+    );
+  }
+
+  const res = await fetch(`${mailgunApiBase(cfg.region)}/v3/${encodeURIComponent(cfg.domain)}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`api:${cfg.apiKey}`).toString("base64")}`,
+    },
+    body: form,
+  });
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    throw new Error(`Mailgun send failed: ${res.status} ${res.statusText}${text ? ` ${text}` : ""}`);
+  }
+  let parsed = {};
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch (_err) {
+    parsed = {};
+  }
+  return {
+    provider: providerRow.provider,
+    providerConfigId: providerRow.id,
+    providerMessageId: parsed.id || null,
+  };
+}
+
+async function sendPostmark(providerRow, cfg, input, useCase) {
+  if (typeof fetch !== "function") {
+    throw new Error("Postmark provider requires Node 18+ fetch support.");
+  }
+  const body = {
+    From: input.from || cfg.fromEmail || config.aws.ses.defaultFrom,
+    To: input.to,
+    Subject: input.subject || "",
+    HtmlBody: input.html || input.text || "",
+    TextBody: input.text || stripHtml(input.html || ""),
+    Metadata: {
+      domain: useCase,
+      ...(input.messageId ? { message_id: String(input.messageId) } : {}),
+      ...(input.trackingTags || []).reduce((acc, tag) => {
+        acc[String(tag.name).slice(0, 120)] = String(tag.value).slice(0, 500);
+        return acc;
+      }, {}),
+    },
+  };
+  if (cfg.messageStream) body.MessageStream = cfg.messageStream;
+  if (input.attachments?.length) {
+    body.Attachments = input.attachments.map((attachment) => {
+      const content = Buffer.isBuffer(attachment.content)
+        ? attachment.content
+        : Buffer.from(String(attachment.content || ""), attachment.encoding === "base64" ? "base64" : "utf8");
+      return {
+        Name: attachment.filename || "attachment",
+        Content: content.toString("base64"),
+        ContentType: attachment.contentType || "application/octet-stream",
+      };
+    });
+  }
+  const res = await fetch("https://api.postmarkapp.com/email", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "X-Postmark-Server-Token": cfg.serverToken,
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    throw new Error(`Postmark send failed: ${res.status} ${res.statusText}${text ? ` ${text}` : ""}`);
+  }
+  let parsed = {};
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch (_err) {
+    parsed = {};
+  }
+  return {
+    provider: providerRow.provider,
+    providerConfigId: providerRow.id,
+    providerMessageId: parsed.MessageID || parsed.MessageId || null,
+  };
+}
+
+function mailgunApiBase(region) {
+  return String(region || "us").toLowerCase() === "eu"
+    ? "https://api.eu.mailgun.net"
+    : "https://api.mailgun.net";
 }
 
 function buildRawMime({ from, to, subject, html, text, attachments }) {

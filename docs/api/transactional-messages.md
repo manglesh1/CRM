@@ -189,7 +189,29 @@ When SES sends an email, it includes `EmailTags`:
 { domain: "transactional", message_id: "<uuid>" }
 ```
 
-When AWS SES bounces/delivers/etc., it publishes to SNS → `POST /api/webhooks/ses`. The handler:
+Recommended production flow:
+
+```
+AWS SES configuration set
+  -> SNS topic
+  -> SQS queue from SQS_WEBHOOK_EVENTS_URL
+  -> npm run worker:webhooks
+  -> crm_transactional_delivery_events / crm_marketing_delivery_events
+```
+
+The older HTTPS route `POST /api/webhooks/ses` still exists for local tests or direct integrations, but production should prefer SNS → SQS so provider events are not lost if the CRM API is temporarily down.
+
+Customer-owned API providers can also post directly to provider-specific webhook endpoints:
+
+```
+SendGrid -> POST /api/webhooks/sendgrid
+Mailgun  -> POST /api/webhooks/mailgun
+Postmark -> POST /api/webhooks/postmark
+```
+
+Movira adds provider metadata when sending (`domain` and `message_id`) so those webhooks can update the right transactional or marketing message. SMTP-only providers can send mail and use Movira open/click tracking, but SMTP does not reliably provide delivery, bounce, or complaint callbacks.
+
+When AWS SES bounces/delivers/etc., it publishes to SNS. SNS sends the notification to the webhook-events SQS queue. The webhook worker reads that queue and calls the same SES handler. The handler:
 
 1. Detects `domain` tag → routes to transactional or marketing pipeline
 2. Looks up the message by `message_id` tag (or `providerMessageId` fallback)
@@ -199,6 +221,15 @@ When AWS SES bounces/delivers/etc., it publishes to SNS → `POST /api/webhooks/
 4. Inserts a row into `crm_transactional_delivery_events` with the full SES payload
 
 Marketing path is similar but uses `crm_marketing_messages` and `crm_marketing_delivery_events`.
+
+Required runtime:
+
+```
+SQS_WEBHOOK_EVENTS_URL=https://sqs.<region>.amazonaws.com/<account>/movira-ses-events
+npm run worker:webhooks
+```
+
+Local development starts this worker automatically through `npm run dev`.
 
 ## Audit logging
 
@@ -213,7 +244,7 @@ Entry includes: actor (when available), entity name, changed fields, metadata.
 
 ## Local development
 
-Without SQS URLs configured, the row is created with `status: enqueue_skipped`. This is by design — the binding lookup, template resolution, variable mapping, and attachment storage all happen and are inspectable in DB. Add `AWS_SQS_TRANSACTIONAL_CRITICAL_URL` + `AWS_SQS_TRANSACTIONAL_DEFAULT_URL` to actually enqueue, plus run `npm run worker:transactional` for the worker to dispatch.
+Without SQS URLs configured, the row is created with `status: enqueue_skipped`. This is by design — the binding lookup, template resolution, variable mapping, and attachment storage all happen and are inspectable in DB. Add `SQS_TRANSACTIONAL_CRITICAL_URL` + `SQS_TRANSACTIONAL_DEFAULT_URL` to actually enqueue, plus run `npm run worker:transactional` for the worker to dispatch.
 
 ```bash
 npm run migrate

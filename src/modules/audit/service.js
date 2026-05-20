@@ -88,6 +88,7 @@ async function recordAuditLog(input = {}) {
 async function listAuditLogs({
   locationId,
   entityType,
+  entityTypes,
   entityId,
   action,
   outcome,
@@ -102,6 +103,13 @@ async function listAuditLogs({
   const where = {};
   if (locationId) where.locationId = Number(locationId);
   if (entityType) where.entityType = entityType;
+  if (!entityType && entityTypes) {
+    const types = String(entityTypes)
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    if (types.length) where.entityType = { [Op.in]: types };
+  }
   if (entityId) where.entityId = String(entityId);
   if (action) where.action = action;
   if (outcome) where.outcome = outcome;

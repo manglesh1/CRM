@@ -823,7 +823,7 @@ function applyTracking(html, tracking) {
   }
   if (tracking.openPixelUrl) {
     const pixel = `<img src="${escapeAttr(tracking.openPixelUrl)}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;opacity:0;" />`;
-    out = out.replace("</body>", `${pixel}</body>`);
+    out = /<\/body>/i.test(out) ? out.replace(/<\/body>/i, `${pixel}</body>`) : `${out}${pixel}`;
   }
   return out;
 }

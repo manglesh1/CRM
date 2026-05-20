@@ -3,6 +3,8 @@ const requiredInProduction = [
   "JWT_SECRET",
   "INTERNAL_API_SECRET",
   "AWS_REGION",
+  "SQS_TRANSACTIONAL_CRITICAL_URL",
+  "SQS_TRANSACTIONAL_DEFAULT_URL",
 ];
 
 function requireProductionEnv() {
@@ -14,6 +16,14 @@ function requireProductionEnv() {
 }
 
 requireProductionEnv();
+
+function envValue(...keys) {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value) return value;
+  }
+  return "";
+}
 
 const config = {
   env: process.env.NODE_ENV || "development",
@@ -29,17 +39,19 @@ const config = {
   aws: {
     region: process.env.AWS_REGION || "us-east-1",
     queues: {
-      transactionalCritical: process.env.SQS_TRANSACTIONAL_CRITICAL_URL || "",
-      transactionalDefault: process.env.SQS_TRANSACTIONAL_DEFAULT_URL || "",
-      marketingBulk: process.env.SQS_MARKETING_BULK_URL || "",
-      marketingJourney: process.env.SQS_MARKETING_JOURNEY_URL || "",
-      webhookEvents: process.env.SQS_WEBHOOK_EVENTS_URL || "",
+      transactionalCritical: envValue("SQS_TRANSACTIONAL_CRITICAL_URL"),
+      transactionalCriticalDlq: envValue("SQS_TRANSACTIONAL_CRITICAL_DLQ_URL"),
+      transactionalDefault: envValue("SQS_TRANSACTIONAL_DEFAULT_URL"),
+      transactionalDefaultDlq: envValue("SQS_TRANSACTIONAL_DEFAULT_DLQ_URL"),
+      marketingBulk: envValue("SQS_MARKETING_BULK_URL"),
+      marketingJourney: envValue("SQS_MARKETING_JOURNEY_URL"),
+      webhookEvents: envValue("SQS_WEBHOOK_EVENTS_URL"),
     },
     ses: {
       transactionalConfigSet:
-        process.env.SES_TRANSACTIONAL_CONFIG_SET || "movira-transactional",
-      marketingConfigSet: process.env.SES_MARKETING_CONFIG_SET || "movira-marketing",
-      defaultFrom: process.env.SES_DEFAULT_FROM || "no-reply@movira.app",
+        envValue("SES_TRANSACTIONAL_CONFIG_SET", "AWS_SES_TRANSACTIONAL_CONFIG_SET") || "movira-transactional",
+      marketingConfigSet: envValue("SES_MARKETING_CONFIG_SET", "AWS_SES_MARKETING_CONFIG_SET") || "movira-marketing",
+      defaultFrom: envValue("SES_DEFAULT_FROM", "AWS_SES_DEFAULT_FROM") || "no-reply@movira.app",
     },
     s3: {
       marketingAssetsBucket: process.env.S3_MARKETING_ASSETS_BUCKET || "",

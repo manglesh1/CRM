@@ -127,7 +127,6 @@ async function getQueueAttributes(queueUrl) {
         "ApproximateNumberOfMessages",
         "ApproximateNumberOfMessagesNotVisible",
         "ApproximateNumberOfMessagesDelayed",
-        "ApproximateAgeOfOldestMessage",
         "VisibilityTimeout",
         "MessageRetentionPeriod",
         "RedrivePolicy",

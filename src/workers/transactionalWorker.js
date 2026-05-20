@@ -4,6 +4,7 @@ const config = require("../config");
 const logger = require("../shared/logger");
 const sqs = require("../modules/messaging-core/aws/sqsClient");
 const processor = require("../modules/transactional/workerProcessor");
+const heartbeat = require("../modules/marketing/email/workerHeartbeatService");
 
 const queues = [
   config.aws.queues.transactionalCritical,
@@ -11,6 +12,7 @@ const queues = [
 ].filter(Boolean);
 
 let stopping = false;
+const workerId = heartbeat.defaultWorkerId("transactional-worker");
 
 process.on("SIGINT", () => {
   stopping = true;
@@ -23,10 +25,24 @@ process.on("SIGTERM", () => {
 async function run() {
   if (queues.length === 0) {
     logger.warn("No transactional SQS queues configured; worker exiting");
+    await heartbeat.safeHeartbeat({
+      workerType: "transactional-worker",
+      workerId,
+      status: "stopped",
+      event: "no_queues",
+      metadata: { queuesConfigured: 0 },
+    }, logger);
     return;
   }
 
   logger.info({ queues: queues.length }, "transactional worker started");
+  await heartbeat.safeHeartbeat({
+    workerType: "transactional-worker",
+    workerId,
+    status: "running",
+    event: "started",
+    metadata: { queuesConfigured: queues.length },
+  }, logger);
 
   while (!stopping) {
     for (const queueUrl of queues) {
@@ -35,9 +51,23 @@ async function run() {
   }
 
   logger.info("transactional worker stopped");
+  await heartbeat.safeHeartbeat({
+    workerType: "transactional-worker",
+    workerId,
+    status: "stopped",
+    event: "stopped",
+  }, logger);
 }
 
 async function pollQueue(queueUrl) {
+  const queueType = queueUrl === config.aws.queues.transactionalCritical ? "critical" : "default";
+  await heartbeat.safeHeartbeat({
+    workerType: "transactional-worker",
+    workerId,
+    queueType,
+    status: "polling",
+    event: "poll",
+  }, logger);
   const messages = await sqs.receiveMessages(queueUrl, {
     maxMessages: 5,
     waitTimeSeconds: 10,
@@ -48,8 +78,25 @@ async function pollQueue(queueUrl) {
       const result = await processor.processTransactionalSqsMessage(message);
       await sqs.deleteMessage(queueUrl, message.ReceiptHandle);
       logger.info({ result }, "transactional message processed");
+      await heartbeat.safeHeartbeat({
+        workerType: "transactional-worker",
+        workerId,
+        queueType,
+        status: "running",
+        event: "processed",
+        processedDelta: result?.skipped ? 0 : 1,
+      }, logger);
     } catch (err) {
       logger.error({ err }, "transactional message failed");
+      await heartbeat.safeHeartbeat({
+        workerType: "transactional-worker",
+        workerId,
+        queueType,
+        status: "error",
+        event: "failed",
+        failedDelta: 1,
+        error: err,
+      }, logger);
       // Do not delete the SQS message. SQS retry + DLQ policy owns redelivery.
     }
   }

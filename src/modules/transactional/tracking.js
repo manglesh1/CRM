@@ -73,6 +73,78 @@ async function recordTransactionalSesEvent({ eventType, providerMessageId, tagge
   };
 }
 
+async function recordTransactionalEngagementEvent(messageId, eventType, payload = {}) {
+  const message = await findTransactionalMessage({ taggedMessageId: messageId });
+  if (!message) {
+    return { matched: false, messageId };
+  }
+
+  const normalized = eventType === "open" ? "opened" : eventType === "click" ? "clicked" : eventType;
+  const allowed = new Set([
+    DELIVERY_EVENT.OPENED,
+    DELIVERY_EVENT.CLICKED,
+    DELIVERY_EVENT.UNSUBSCRIBED,
+  ]);
+  if (!allowed.has(normalized)) {
+    return { matched: true, ignored: true, reason: "unsupported_engagement_event", eventType };
+  }
+
+  await repository.createDeliveryEvent({
+    messageId: message.id,
+    provider: message.provider || "movira",
+    providerMessageId: message.providerMessageId || null,
+    eventType: normalized,
+    payload,
+  });
+
+  return {
+    matched: true,
+    messageId: message.id,
+    eventType: normalized,
+  };
+}
+
+async function recordTransactionalProviderEvent({ provider, eventType, providerMessageId, taggedMessageId, notification }) {
+  const message = await findTransactionalMessage({ providerMessageId, taggedMessageId });
+  if (!message) {
+    return { matched: false, providerMessageId, taggedMessageId };
+  }
+
+  const mapping = SES_EVENT_TO_STATUS[eventType];
+  if (!mapping) {
+    return { matched: true, ignored: true, reason: "unmapped_event", eventType };
+  }
+
+  await repository.createDeliveryEvent({
+    messageId: message.id,
+    provider,
+    providerMessageId,
+    eventType: mapping.deliveryEvent,
+    payload: {
+      source: `${provider}_webhook`,
+      providerEventType: eventType,
+      notification,
+    },
+  });
+
+  if (mapping.status) {
+    const update = { status: mapping.status };
+    if (mapping.field && !message[mapping.field]) update[mapping.field] = new Date();
+    if (mapping.status === STATUS.FAILED) {
+      update.lastError = `${provider}: ${eventType}`;
+    }
+    await message.update(update);
+  }
+
+  return {
+    matched: true,
+    messageId: message.id,
+    eventType: mapping.deliveryEvent,
+  };
+}
+
 module.exports = {
   recordTransactionalSesEvent,
+  recordTransactionalEngagementEvent,
+  recordTransactionalProviderEvent,
 };

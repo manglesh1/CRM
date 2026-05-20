@@ -46,14 +46,31 @@ async function getEmailSettings({ locationId }) {
       { key: "default_provider", label: "Use Movira SES", status: "ready" },
       { key: "sending_domain", label: "Add a dedicated sending domain", status: domains.length ? "started" : "not_started" },
       { key: "dns_verification", label: "Verify DNS records", status: domains.some((d) => d.status === "verified") ? "verified" : "pending" },
-      { key: "optional_provider", label: "Connect customer SMTP/SES/SendGrid", status: providers.length ? "configured" : "optional" },
+      { key: "optional_provider", label: "Connect customer SES/SendGrid or SMTP fallback", status: providers.length ? "configured" : "optional" },
     ],
     defaultProvider: PROVIDER_OPTIONS[0],
     providerOptions: PROVIDER_OPTIONS,
     providers: providers.map(serializeProvider),
+    activeProviderRoutes: buildActiveProviderRoutes(providers),
     domains: domains.map(serializeDomain),
     routes: routes.map(serializeRoute),
   };
+}
+
+function buildActiveProviderRoutes(providers = []) {
+  return ["transactional", "marketing"].map((useCase) => {
+    const provider = providers.find((row) => row.domain === useCase || row.domain === "both");
+    return {
+      useCase,
+      provider: provider ? serializeProvider(provider) : null,
+      isDefault: !provider,
+      displayName: provider?.displayName || "Movira Email System",
+      providerKey: provider?.provider || "movira_ses",
+      note: provider
+        ? "Customer provider overrides Movira SES for this use case."
+        : "Movira SES is used because no active customer provider overrides this use case.",
+    };
+  });
 }
 
 async function ensureDomainRoutes({ model, locationId }) {
@@ -236,6 +253,12 @@ async function verifyProviderConfig({ provider, config = {} } = {}) {
   if (provider === "customer_sendgrid") {
     return verifySendgrid(config);
   }
+  if (provider === "customer_mailgun") {
+    return verifyMailgun(config);
+  }
+  if (provider === "customer_postmark") {
+    return verifyPostmark(config);
+  }
   return { ok: false, message: "Verification not implemented for this provider." };
 }
 
@@ -318,6 +341,60 @@ async function verifySendgrid(config) {
   } catch (err) {
     return { ok: false, message: `SendGrid verify failed: ${err?.message || "network error"}` };
   }
+}
+
+async function verifyMailgun(config) {
+  if (typeof fetch !== "function") {
+    return { ok: false, message: "Mailgun verify needs Node 18+ (built-in fetch)." };
+  }
+  try {
+    const res = await fetch(`${mailgunApiBase(config.region)}/v3/domains/${encodeURIComponent(config.domain)}`, {
+      headers: {
+        Authorization: `Basic ${Buffer.from(`api:${config.apiKey}`).toString("base64")}`,
+      },
+    });
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, message: "API key rejected by Mailgun." };
+    }
+    if (res.status === 404) {
+      return { ok: false, message: "Mailgun domain was not found for this API key." };
+    }
+    if (!res.ok) {
+      return { ok: false, message: `Mailgun returned ${res.status} ${res.statusText}` };
+    }
+    return { ok: true, message: `Mailgun domain ${config.domain} is reachable.` };
+  } catch (err) {
+    return { ok: false, message: `Mailgun verify failed: ${err?.message || "network error"}` };
+  }
+}
+
+async function verifyPostmark(config) {
+  if (typeof fetch !== "function") {
+    return { ok: false, message: "Postmark verify needs Node 18+ (built-in fetch)." };
+  }
+  try {
+    const res = await fetch("https://api.postmarkapp.com/server", {
+      headers: {
+        Accept: "application/json",
+        "X-Postmark-Server-Token": config.serverToken,
+      },
+    });
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, message: "Server token rejected by Postmark." };
+    }
+    if (!res.ok) {
+      return { ok: false, message: `Postmark returned ${res.status} ${res.statusText}` };
+    }
+    return { ok: true, message: "Postmark server token accepted." };
+  } catch (err) {
+    return { ok: false, message: `Postmark verify failed: ${err?.message || "network error"}` };
+  }
+}
+
+function mailgunApiBase(region) {
+  return String(region || "us").toLowerCase() === "eu"
+    ? "https://api.eu.mailgun.net"
+    : "https://api.mailgun.net";
 }
 
 function humanizeFieldKey(key) {
@@ -447,12 +524,15 @@ function maskConfig(config = {}) {
 }
 
 function serializeProvider(row) {
+  const option = PROVIDER_OPTIONS.find((item) => item.provider === row.provider);
   return {
     id: row.id,
     locationId: row.locationId,
     domain: row.domain,
     channel: row.channel,
     provider: row.provider,
+    label: option?.label || row.provider,
+    capabilities: option?.capabilities || null,
     displayName: row.displayName,
     priority: row.priority,
     isDefault: row.isDefault,
@@ -577,6 +657,16 @@ function validateProviderBody(body, option) {
       errors.push({
         field: "config.port",
         message: "SMTP port must be a valid number between 1 and 65535.",
+      });
+    }
+  }
+
+  if (provider === "customer_mailgun") {
+    const region = String(config.region || "").toLowerCase();
+    if (!["us", "eu"].includes(region)) {
+      errors.push({
+        field: "config.region",
+        message: "Mailgun region must be us or eu.",
       });
     }
   }

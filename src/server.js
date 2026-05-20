@@ -8,6 +8,7 @@ const logger = require("./shared/logger");
 const routes = require("./routes");
 const triggerLinkService = require("./modules/marketing/triggerLinks/service");
 const marketingTrackingRoutes = require("./modules/marketing/tracking/routes");
+const transactionalTrackingRoutes = require("./modules/transactional/trackingRoutes");
 const { startUnverifiedDomainCleaner } = require("./workers/unverifiedDomainCleaner");
 
 const app = express();
@@ -16,6 +17,7 @@ const port = Number(process.env.PORT || 4100);
 app.use(helmet());
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use(pinoHttp({ logger }));
 
 app.get("/health", (_req, res) => {
@@ -41,6 +43,7 @@ app.get("/tl/:slug", async (req, res) => {
 });
 
 app.use("/m", marketingTrackingRoutes);
+app.use("/t", transactionalTrackingRoutes);
 
 app.use("/api", routes);
 
