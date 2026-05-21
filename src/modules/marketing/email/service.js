@@ -148,6 +148,19 @@ function pathExists(obj, path) {
     });
 }
 
+// Org-level {{business.*}} defaults from config, with only non-empty values so
+// an unset field (e.g. address) still surfaces as a legitimate preflight warning.
+// Per-campaign body.data.business overrides these.
+function mergeBusinessDefaults(data = {}) {
+  const defaults = {};
+  for (const [key, value] of Object.entries(config.business || {})) {
+    if (value) defaults[key] = value;
+  }
+  const provided = data.business && typeof data.business === "object" ? data.business : {};
+  const business = { ...defaults, ...provided };
+  return Object.keys(business).length ? { ...data, business } : data;
+}
+
 function sampleMergeData({ recipients = [], data = {} } = {}) {
   const recipient = recipients[0] || {};
   const recipientData = recipient.data && typeof recipient.data === "object" ? recipient.data : {};
@@ -1262,7 +1275,7 @@ async function preflightCampaignMessages(campaignId, body = {}) {
       templateValidation = validateTemplateBeforeSend(template, {
         subject: body.subject || campaign.name,
         recipients,
-        data: body.data && typeof body.data === "object" ? body.data : {},
+        data: mergeBusinessDefaults(body.data && typeof body.data === "object" ? body.data : {}),
       });
       checks.push(...templateValidation.checks.map((check) => ({
         ...check,
@@ -1368,7 +1381,7 @@ async function queueCampaignMessages(campaignId, body = {}) {
   const template = await CrmMarketingTemplate.findByPk(templateId);
   if (!template) throw notFound("Template");
   const compliance = analyzeTemplateCompliance(template);
-  const globalData = body.data && typeof body.data === "object" ? body.data : {};
+  const globalData = mergeBusinessDefaults(body.data && typeof body.data === "object" ? body.data : {});
   const templateValidation = validateTemplateBeforeSend(template, {
     subject: body.subject || campaign.name,
     recipients,
@@ -1865,10 +1878,45 @@ async function getStatistics(query = {}) {
   };
 }
 
+// Enqueue a single marketing email (no campaign) — used by the automation
+// engine's send_email action. Respects suppression and the org business footer.
+async function enqueueSingleMessage({ locationId, templateId, recipient, data = {}, subject, source = "automation" }) {
+  const { CrmMarketingTemplate } = getModels();
+  const email = String(recipient || "").trim();
+  if (!email) return { status: "skipped", reason: "no recipient email" };
+  if (!templateId) return { status: "skipped", reason: "no template selected" };
+  const template = await CrmMarketingTemplate.findByPk(templateId);
+  if (!template) return { status: "skipped", reason: "template not found" };
+  if (template.useCase === "transactional") return { status: "skipped", reason: "template is transactional" };
+
+  const suppression = await suppressionService.isSuppressed(locationId, email);
+  if (suppression) return { status: "suppressed", reason: "recipient suppressed" };
+
+  const resolvedSubject = subject || template.subject || template.name;
+  const message = await marketingMessageRepository.createMessage({
+    locationId,
+    templateId,
+    channel: "email",
+    recipient: email,
+    subject: resolvedSubject,
+    payload: { data: mergeBusinessDefaults(data), subject: resolvedSubject },
+    metadata: { source },
+  });
+  const enqueue = await enqueueMarketingMessage({ messageId: message.id, channel: "email", queueType: "bulk" });
+  const updated = await marketingMessageRepository.markQueued(message, enqueue);
+  await marketingMessageRepository.createDeliveryEvent({
+    messageId: updated.id,
+    eventType: enqueue?.skipped ? "enqueue_skipped" : "queued",
+    payload: { source, enqueue },
+  });
+  return { status: updated.status, messageId: updated.id, skipped: Boolean(enqueue?.skipped) };
+}
+
 module.exports = {
   getTemplateBuilderCatalog,
   getMergeTagCatalog,
   validateTemplateBeforeSend,
+  enqueueSingleMessage,
   // folders
   listFolders,
   createFolder,

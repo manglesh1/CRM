@@ -19,6 +19,15 @@ const defineCrmMarketingSuppression = require("./CrmMarketingSuppression");
 const defineCrmMarketingWorkerHeartbeat = require("./CrmMarketingWorkerHeartbeat");
 const defineCrmAuditLog = require("./CrmAuditLog");
 const defineCrmEventTemplateBinding = require("./CrmEventTemplateBinding");
+const defineCrmContact = require("./CrmContact");
+const defineCrmContactIdentity = require("./CrmContactIdentity");
+const defineCrmContactImportJob = require("./CrmContactImportJob");
+const defineCrmContactField = require("./CrmContactField");
+const defineCrmContactNote = require("./CrmContactNote");
+const defineCrmSegment = require("./CrmSegment");
+const defineCrmSegmentMember = require("./CrmSegmentMember");
+const defineCrmAutomationWorkflow = require("./CrmAutomationWorkflow");
+const defineCrmAutomationRun = require("./CrmAutomationRun");
 
 let models = null;
 
@@ -45,6 +54,15 @@ function getModels() {
   const CrmMarketingWorkerHeartbeat = defineCrmMarketingWorkerHeartbeat(sequelize);
   const CrmAuditLog = defineCrmAuditLog(sequelize);
   const CrmEventTemplateBinding = defineCrmEventTemplateBinding(sequelize);
+  const CrmContact = defineCrmContact(sequelize);
+  const CrmContactIdentity = defineCrmContactIdentity(sequelize);
+  const CrmContactImportJob = defineCrmContactImportJob(sequelize);
+  const CrmContactField = defineCrmContactField(sequelize);
+  const CrmContactNote = defineCrmContactNote(sequelize);
+  const CrmSegment = defineCrmSegment(sequelize);
+  const CrmSegmentMember = defineCrmSegmentMember(sequelize);
+  const CrmAutomationWorkflow = defineCrmAutomationWorkflow(sequelize);
+  const CrmAutomationRun = defineCrmAutomationRun(sequelize);
 
   CrmMarketingFolder.hasMany(CrmMarketingTemplate, { foreignKey: "folderId", as: "templates" });
   CrmMarketingTemplate.belongsTo(CrmMarketingFolder, { foreignKey: "folderId", as: "folder" });
@@ -64,6 +82,18 @@ function getModels() {
   CrmMarketingSuppression.belongsTo(CrmMarketingCampaign, { foreignKey: "campaignId", as: "campaign" });
   CrmMarketingFolder.hasMany(CrmMarketingAsset, { foreignKey: "folderId", as: "assets" });
   CrmMarketingAsset.belongsTo(CrmMarketingFolder, { foreignKey: "folderId", as: "folder" });
+  CrmContact.hasMany(CrmContactIdentity, { foreignKey: "contactId", as: "identities" });
+  CrmContactIdentity.belongsTo(CrmContact, { foreignKey: "contactId", as: "contact" });
+  CrmContact.hasMany(CrmContactNote, { foreignKey: "contactId", as: "notes" });
+  CrmContactNote.belongsTo(CrmContact, { foreignKey: "contactId", as: "contact" });
+  CrmSegment.hasMany(CrmSegmentMember, { foreignKey: "segmentId", as: "members" });
+  CrmSegmentMember.belongsTo(CrmSegment, { foreignKey: "segmentId", as: "segment" });
+  CrmContact.hasMany(CrmSegmentMember, { foreignKey: "contactId", as: "segmentMemberships" });
+  CrmSegmentMember.belongsTo(CrmContact, { foreignKey: "contactId", as: "contact" });
+  CrmAutomationWorkflow.hasMany(CrmAutomationRun, { foreignKey: "workflowId", as: "runs" });
+  CrmAutomationRun.belongsTo(CrmAutomationWorkflow, { foreignKey: "workflowId", as: "workflow" });
+  CrmContact.hasMany(CrmAutomationRun, { foreignKey: "contactId", as: "automationRuns" });
+  CrmAutomationRun.belongsTo(CrmContact, { foreignKey: "contactId", as: "contact" });
 
   TransactionalMessage.hasMany(TransactionalDeliveryEvent, {
     foreignKey: "messageId",
@@ -107,6 +137,15 @@ function getModels() {
     CrmMarketingWorkerHeartbeat,
     CrmAuditLog,
     CrmEventTemplateBinding,
+    CrmContact,
+    CrmContactIdentity,
+    CrmContactImportJob,
+    CrmContactField,
+    CrmContactNote,
+    CrmSegment,
+    CrmSegmentMember,
+    CrmAutomationWorkflow,
+    CrmAutomationRun,
   };
   return models;
 }

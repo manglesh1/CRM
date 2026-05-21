@@ -36,6 +36,9 @@ const config = {
     publicBaseUrl: (process.env.CRM_PUBLIC_BASE_URL || process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, ""),
     trackingBaseUrl: (process.env.CRM_TRACKING_BASE_URL || process.env.CRM_PUBLIC_BASE_URL || process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, ""),
   },
+  integrations: {
+    coreApiBaseUrl: (process.env.MOVIRA_CORE_API_BASE_URL || process.env.CORE_API_BASE_URL || "http://127.0.0.1:5171/api").replace(/\/+$/, ""),
+  },
   aws: {
     region: process.env.AWS_REGION || "us-east-1",
     queues: {
@@ -75,6 +78,16 @@ const config = {
       perMinute: Number(process.env.MARKETING_SEND_RATE_PER_MINUTE || 60),
       perHour: Number(process.env.MARKETING_SEND_RATE_PER_HOUR || 1000),
     },
+  },
+  // Org-level sender/business identity injected as default {{business.*}} merge
+  // data for marketing sends (compliance footer). Per-campaign body.data.business
+  // overrides these. business.address is a legal requirement before real sends.
+  business: {
+    name: process.env.CRM_BUSINESS_NAME || "",
+    address: process.env.CRM_BUSINESS_ADDRESS || "",
+    phone: process.env.CRM_BUSINESS_PHONE || "",
+    email: process.env.CRM_BUSINESS_EMAIL || envValue("SES_DEFAULT_FROM", "AWS_SES_DEFAULT_FROM") || "",
+    website: process.env.CRM_BUSINESS_WEBSITE || "",
   },
 };
 
