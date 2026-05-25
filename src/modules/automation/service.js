@@ -32,31 +32,42 @@ function plain(row) {
   return row?.get ? row.get({ plain: true }) : row;
 }
 
-function cleanNodes(nodes) {
+function cleanNodes(nodes, depth = 0) {
   if (!Array.isArray(nodes)) return [];
-  return nodes.slice(0, 80).map((node, index) => ({
-    id: cleanString(node.id, 120) || `node_${index + 1}`,
-    actionId: cleanString(node.actionId, 120),
-    type: cleanString(node.type, 40) || (index === 0 ? "trigger" : "action"),
-    label: cleanString(node.label, 180) || `Step ${index + 1}`,
-    subtitle: cleanString(node.subtitle, 500),
-    iconKey: cleanString(node.iconKey, 80),
-    tone: cleanString(node.tone, 40),
-    branches: Array.isArray(node.branches) ? node.branches.map((item) => cleanString(item, 80)).filter(Boolean).slice(0, 8) : undefined,
-    config: node.config && typeof node.config === "object" ? node.config : {},
-  }));
+  return nodes.slice(0, 80).map((node, index) => {
+    const cleaned = {
+      id: cleanString(node.id, 120) || `node_${index + 1}`,
+      actionId: cleanString(node.actionId, 120),
+      type: cleanString(node.type, 40) || "action",
+      label: cleanString(node.label, 180) || `Step ${index + 1}`,
+      subtitle: cleanString(node.subtitle, 500),
+      iconKey: cleanString(node.iconKey, 80),
+      tone: cleanString(node.tone, 40),
+      branches: Array.isArray(node.branches) ? node.branches.map((item) => cleanString(item, 80)).filter(Boolean).slice(0, 8) : undefined,
+      config: node.config && typeof node.config === "object" ? node.config : {},
+    };
+    // Preserve if/else branch paths (recursively cleaned, depth-limited).
+    if (node.paths && typeof node.paths === "object" && depth < 3) {
+      cleaned.paths = {
+        yes: cleanNodes(node.paths.yes, depth + 1),
+        no: cleanNodes(node.paths.no, depth + 1),
+      };
+    }
+    return cleaned;
+  });
 }
 
 function validateWorkflowPayload(input = {}) {
   const errors = [];
   const name = cleanString(input.name, 180);
-  const triggerKey = cleanString(input.triggerKey || input.trigger, 120);
-  const triggerLabel = cleanString(input.triggerLabel || input.trigger, 180);
   const nodes = cleanNodes(input.nodes);
+  // Triggers are optional on a draft (a brand-new workflow starts empty and the
+  // user adds one or more triggers in the builder). triggerKey/Label default to
+  // the first trigger node when present.
+  const firstTrigger = nodes.find((node) => node.type === "trigger");
+  const triggerKey = cleanString(input.triggerKey || input.trigger || firstTrigger?.actionId, 120) || "";
+  const triggerLabel = cleanString(input.triggerLabel || input.trigger || firstTrigger?.label, 180) || "";
   if (!name) errors.push("name is required");
-  if (!triggerKey) errors.push("triggerKey is required");
-  if (!triggerLabel) errors.push("triggerLabel is required");
-  if (!nodes.length || nodes[0].type !== "trigger") errors.push("first node must be a trigger");
   if (errors.length) throw badRequest("Automation workflow is invalid", errors);
   return { name, triggerKey, triggerLabel, nodes };
 }
@@ -132,15 +143,14 @@ async function updateWorkflow(id, input = {}) {
     patch.status = cleanString(input.status, 40) || "draft";
     patch.publishedAt = patch.status === "published" ? (workflow.publishedAt || new Date()) : null;
   }
-  if (input.triggerKey !== undefined || input.trigger !== undefined) patch.triggerKey = cleanString(input.triggerKey || input.trigger, 120);
-  if (input.triggerLabel !== undefined || input.trigger !== undefined) patch.triggerLabel = cleanString(input.triggerLabel || input.trigger, 180);
   if (input.nodes !== undefined) patch.nodes = cleanNodes(input.nodes);
+  // triggerKey/Label follow the first trigger node when nodes change, else explicit input.
+  const firstTrigger = (patch.nodes || []).find((node) => node.type === "trigger");
+  if (input.triggerKey !== undefined || input.trigger !== undefined || firstTrigger) patch.triggerKey = cleanString(input.triggerKey || input.trigger || firstTrigger?.actionId, 120) || "";
+  if (input.triggerLabel !== undefined || input.trigger !== undefined || firstTrigger) patch.triggerLabel = cleanString(input.triggerLabel || input.trigger || firstTrigger?.label, 180) || "";
   if (input.settings !== undefined) patch.settings = input.settings && typeof input.settings === "object" ? input.settings : {};
   if (input.stats !== undefined) patch.stats = input.stats && typeof input.stats === "object" ? input.stats : {};
   if (patch.name === null) throw badRequest("Workflow name is required");
-  if (patch.triggerKey === null) throw badRequest("triggerKey is required");
-  if (patch.triggerLabel === null) throw badRequest("triggerLabel is required");
-  if (patch.nodes && (!patch.nodes.length || patch.nodes[0].type !== "trigger")) throw badRequest("first node must be a trigger");
   const updated = await workflow.update(patch);
   return serializeWorkflow(updated);
 }
@@ -162,7 +172,7 @@ async function testWorkflow(id, input = {}) {
   if (!workflow) throw notFound("Automation workflow");
   const data = plain(workflow);
   const nodes = Array.isArray(data.nodes) ? data.nodes : [];
-  if (nodes.length < 2) throw badRequest("Add at least one action before testing");
+  if (!nodes.some((n) => n.type !== "trigger")) throw badRequest("Add at least one action before testing");
 
   // Dry-run the real engine against a sample contact (no side effects).
   let contact = null;
@@ -241,7 +251,7 @@ async function enrollWorkflow(id, input = {}) {
   if (!workflow) throw notFound("Automation workflow");
   const data = plain(workflow);
   const nodes = Array.isArray(data.nodes) ? data.nodes : [];
-  if (nodes.length < 2) throw badRequest("Add at least one action before enrolling");
+  if (!nodes.some((n) => n.type !== "trigger")) throw badRequest("Add at least one action before enrolling");
 
   const contacts = await resolveEnrollContacts(models, locationId, input);
   const summary = { workflowId: id, enrolled: 0, succeeded: 0, stopped: 0, failed: 0 };

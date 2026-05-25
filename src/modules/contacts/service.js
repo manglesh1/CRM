@@ -624,7 +624,7 @@ function buildSearchScope(models, locationId, { segmentId, filters, search, cust
   return { where, include, hasConstraint };
 }
 
-// Powers the GoHighLevel-style customers grid: advanced filter tree + free-text
+// Powers the customers grid: advanced filter tree + free-text
 // search + optional saved segment, with sortable columns and pagination.
 async function searchContacts(input = {}) {
   const models = getModels();

@@ -45,7 +45,7 @@ const CUSTOM_FIELD_TYPES = Object.keys(CUSTOM_TYPE_TO_FILTER_TYPE);
 const CUSTOM_FIELD_PREFIX = "cf:";
 
 // Built-in fields. `column` is the crm_contacts column. `defaultColumn` marks the
-// ones shown in the grid out of the box (mirrors the GoHighLevel default layout).
+// ones shown in the grid out of the box (the default grid layout).
 const BUILTIN_FIELDS = [
   { key: "fullName", label: "Customer name", type: "string", column: "fullName", locked: true, defaultColumn: true, sortable: true },
   { key: "firstName", label: "First name", type: "string", column: "firstName", sortable: true },

@@ -53,7 +53,7 @@ async function sendSmtpEmail({ to, subject, html, text, from, attachments = [] }
 
 function getClient() {
   if (!client) {
-    client = new SESv2Client({ region: config.aws.region });
+    client = new SESv2Client({ region: config.aws.ses.region || config.aws.region });
   }
   return client;
 }

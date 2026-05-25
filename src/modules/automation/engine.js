@@ -128,16 +128,26 @@ async function executeNode(node, ctx) {
   }
 }
 
-// Execute a workflow for one contact. Returns { steps, status, currentNodeId }.
-async function runForContact(workflow, contact, { dryRun = false } = {}) {
-  const models = getModels();
-  const nodes = Array.isArray(workflow.nodes) ? workflow.nodes : [];
-  const ctx = { models, contact, locationId: workflow.locationId, dryRun };
-  const steps = [];
+function hasBranchPaths(node) {
+  return node.actionId === "if_else" && node.paths
+    && ((Array.isArray(node.paths.yes) && node.paths.yes.length) || (Array.isArray(node.paths.no) && node.paths.no.length));
+}
+
+// Run a flat list of nodes; an if_else with paths splits into its yes/no branch
+// (branch is terminal). Returns { steps, status, lastNodeId }.
+async function runSequence(nodeList, ctx, steps) {
   let status = "success";
   let lastNodeId = null;
-
-  for (const node of nodes) {
+  for (const node of nodeList) {
+    if (node.type === "trigger") continue; // triggers define enrollment, not execution
+    lastNodeId = node.id;
+    if (hasBranchPaths(node)) {
+      const passed = evaluateCondition(ctx.contact, node.config || {});
+      steps.push(step(node, "success", passed ? "Condition met → Yes branch" : "Condition not met → No branch"));
+      const branch = passed ? (node.paths.yes || []) : (node.paths.no || []);
+      const result = await runSequence(branch, ctx, steps);
+      return { status: result.status, lastNodeId: result.lastNodeId || lastNodeId };
+    }
     let result;
     try {
       result = await executeNode(node, ctx);
@@ -145,12 +155,20 @@ async function runForContact(workflow, contact, { dryRun = false } = {}) {
       result = step(node, "failed", err.message || "Step failed");
     }
     steps.push(result);
-    lastNodeId = node.id;
-    if (result.status === "failed") { status = "failed"; break; }
-    if (result.status === "stopped") { status = "stopped"; break; }
+    if (result.status === "failed") return { status: "failed", lastNodeId };
+    if (result.status === "stopped") return { status: "stopped", lastNodeId };
   }
+  return { status, lastNodeId };
+}
 
-  return { steps, status, currentNodeId: lastNodeId };
+// Execute a workflow for one contact. Returns { steps, status, currentNodeId }.
+async function runForContact(workflow, contact, { dryRun = false } = {}) {
+  const models = getModels();
+  const nodes = Array.isArray(workflow.nodes) ? workflow.nodes : [];
+  const ctx = { models, contact, locationId: workflow.locationId, dryRun };
+  const steps = [];
+  const result = await runSequence(nodes, ctx, steps);
+  return { steps, status: result.status, currentNodeId: result.lastNodeId };
 }
 
 module.exports = { runForContact };

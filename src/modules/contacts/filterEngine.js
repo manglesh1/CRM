@@ -1,4 +1,4 @@
-// Advanced filter engine. Compiles a GoHighLevel-style condition tree into a
+// Advanced filter engine. Compiles an advanced condition tree into a
 // Sequelize `where` fragment for crm_contacts. Shared by the customers grid
 // search endpoint and the segment evaluator so a saved segment and an ad-hoc
 // advanced filter behave identically.

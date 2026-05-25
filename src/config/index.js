@@ -51,6 +51,8 @@ const config = {
       webhookEvents: envValue("SQS_WEBHOOK_EVENTS_URL"),
     },
     ses: {
+      // SES can live in a different region than SQS (AWS_REGION). Falls back to AWS_REGION.
+      region: envValue("AWS_SES_REGION", "SES_REGION") || process.env.AWS_REGION || "us-east-1",
       transactionalConfigSet:
         envValue("SES_TRANSACTIONAL_CONFIG_SET", "AWS_SES_TRANSACTIONAL_CONFIG_SET") || "movira-transactional",
       marketingConfigSet: envValue("SES_MARKETING_CONFIG_SET", "AWS_SES_MARKETING_CONFIG_SET") || "movira-marketing",
