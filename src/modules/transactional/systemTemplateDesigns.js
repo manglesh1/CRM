@@ -1,14 +1,18 @@
 const TOKEN_RE = /\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g;
 
+// All accents derive from the Aero brand orange (#FF7A24 / #F45B0A). Each
+// family gets a distinct orange shade so emails stay on-theme while remaining
+// visually distinguishable. `accent` = hero/button/pill/link, `dark` = facts
+// strip background, `soft` = pill + card-header tint.
 const FAMILY_PROFILES = {
-  booking: { accent: "#EF4444", dark: "#2F2F31", soft: "#FFF1F2", label: "Booking" },
-  payment: { accent: "#0F766E", dark: "#123C3A", soft: "#ECFDF5", label: "Payment" },
-  waiver: { accent: "#F04444", dark: "#332323", soft: "#FFF1F2", label: "Waiver" },
-  membership: { accent: "#2563EB", dark: "#172554", soft: "#EFF6FF", label: "Membership" },
-  giftcard: { accent: "#B45309", dark: "#3B2A16", soft: "#FFF7ED", label: "Gift Card" },
-  guestList: { accent: "#7C3AED", dark: "#2E1A47", soft: "#F5F3FF", label: "Guest List" },
-  simple: { accent: "#334155", dark: "#1F2937", soft: "#F8FAFC", label: "Notice" },
-  system: { accent: "#334155", dark: "#1F2937", soft: "#F8FAFC", label: "Notice" },
+  booking: { accent: "#F45B0A", dark: "#5A2706", soft: "#FFF4EC", label: "Booking" },
+  payment: { accent: "#EA6A12", dark: "#5A2E08", soft: "#FFF3E8", label: "Payment" },
+  waiver: { accent: "#D14808", dark: "#54260A", soft: "#FFF1E8", label: "Waiver" },
+  membership: { accent: "#C2410C", dark: "#4A1F08", soft: "#FDEFE6", label: "Membership" },
+  giftcard: { accent: "#FB8B24", dark: "#6A3410", soft: "#FFF6EA", label: "Gift Card" },
+  guestList: { accent: "#E2560F", dark: "#561F08", soft: "#FFF2EA", label: "Guest List" },
+  simple: { accent: "#B45309", dark: "#44260C", soft: "#FBF3EA", label: "Notice" },
+  system: { accent: "#B45309", dark: "#44260C", soft: "#FBF3EA", label: "Notice" },
 };
 
 function parseJson(value, fallback = {}) {
@@ -84,13 +88,13 @@ function footer(id, content, settings = {}) {
 function styleVars(profile) {
   return `
     <style>
-      .txn-card{border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;background:#ffffff;}
-      .txn-row{border-bottom:1px solid #eef2f7;}
-      .txn-label{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;font-weight:700;}
-      .txn-value{font-size:14px;color:#111827;font-weight:700;line-height:1.45;}
-      .txn-muted{font-size:12px;color:#64748b;line-height:1.55;}
-      .txn-total{font-size:24px;color:#111827;font-weight:800;line-height:1;}
-      .txn-pill{display:inline-block;background:${profile.soft};color:${profile.accent};border-radius:999px;padding:5px 10px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;}
+      .txn-card{border:1px solid #ECECEC;border-radius:10px;overflow:hidden;background:#ffffff;}
+      .txn-row{border-bottom:1px solid #F3F0EC;}
+      .txn-label{font-size:10px;color:#9A8F84;text-transform:uppercase;letter-spacing:.07em;font-weight:700;}
+      .txn-value{font-size:14px;color:#1A1614;font-weight:700;line-height:1.4;}
+      .txn-muted{font-size:12px;color:#8A8079;line-height:1.5;}
+      .txn-total{font-size:21px;color:#1A1614;font-weight:800;line-height:1;}
+      .txn-pill{display:inline-block;background:${profile.accent};color:#ffffff;border-radius:999px;padding:4px 9px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;}
       .txn-link{color:${profile.accent};text-decoration:underline;font-weight:700;}
     </style>
   `;
@@ -101,9 +105,9 @@ function buildSummaryCard(profile, title, rowsHtml) {
     ${styleVars(profile)}
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="txn-card">
       <tr>
-        <td style="padding:16px 18px;background:${profile.soft};">
+        <td style="padding:13px 16px;background:${profile.soft};border-bottom:1px solid #F3F0EC;">
           <span class="txn-pill">${profile.label}</span>
-          <h2 style="margin:10px 0 0;font-size:22px;line-height:1.2;color:#111827;">${title}</h2>
+          <h2 style="margin:8px 0 0;font-size:18px;line-height:1.2;color:#1A1614;font-weight:800;">${title}</h2>
         </td>
       </tr>
       ${rowsHtml}
@@ -117,13 +121,13 @@ function buildBookingMain(profile) {
     "Your order",
     `
       <tr class="txn-row">
-        <td style="padding:16px 18px;">
+        <td style="padding:13px 16px;">
           <div class="txn-label">Booking ID</div>
           <div class="txn-value">{{bookingNumber}}</div>
         </td>
       </tr>
       <tr>
-        <td style="padding:16px 18px;">
+        <td style="padding:13px 16px;">
           <div class="txn-label" style="margin-bottom:8px;">Items</div>
           {{lineItemsHtml}}
           <div style="height:14px;line-height:14px;">&nbsp;</div>
@@ -142,14 +146,14 @@ function buildPaymentMain(profile, key) {
     isLink ? "Complete your payment" : "Payment received",
     `
       <tr class="txn-row">
-        <td style="padding:16px 18px;">
+        <td style="padding:13px 16px;">
           <div class="txn-label">${isLink ? "Amount due" : "Amount paid"}</div>
           <div class="txn-total">${isLink ? "{{amountDue}}" : "{{amountPaid}}"}</div>
           <div class="txn-muted" style="margin-top:6px;">Booking {{bookingNumber}} at {{venueName}}</div>
         </td>
       </tr>
       <tr>
-        <td style="padding:16px 18px;">
+        <td style="padding:13px 16px;">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">{{pricingRowsHtml}}</table>
           {{chargedSummaryHtml}}
           <div class="txn-muted" style="margin-top:12px;">Gateway: {{gateway}}</div>
@@ -167,14 +171,14 @@ function buildWaiverMain(profile, key) {
     signed ? "Waiver signed" : expiring ? "Renew your waiver" : "Sign before you arrive",
     `
       <tr class="txn-row">
-        <td style="padding:16px 18px;">
+        <td style="padding:13px 16px;">
           <div class="txn-label">Guest</div>
           <div class="txn-value">{{guestName}}</div>
           <div class="txn-muted" style="margin-top:6px;">{{venueName}}</div>
         </td>
       </tr>
       <tr>
-        <td style="padding:16px 18px;">
+        <td style="padding:13px 16px;">
           <div class="txn-label">${signed || expiring ? "Expiry" : "Waiver link"}</div>
           <div class="txn-value">${signed || expiring ? "{{expiryDate}}" : '<a class="txn-link" href="{{waiverShareUrl}}">Open waiver</a>'}</div>
           <div class="txn-muted" style="margin-top:8px;">Booking {{bookingNumber}}</div>
@@ -190,14 +194,14 @@ function buildMembershipMain(profile) {
     "Membership details",
     `
       <tr class="txn-row">
-        <td style="padding:16px 18px;">
+        <td style="padding:13px 16px;">
           <div class="txn-label">Member</div>
           <div class="txn-value">{{guestName}}</div>
           <div class="txn-muted" style="margin-top:6px;">{{membershipName}}</div>
         </td>
       </tr>
       <tr>
-        <td style="padding:16px 18px;">
+        <td style="padding:13px 16px;">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
             <tr><td class="txn-muted">Status</td><td align="right" class="txn-value">{{membership.status}}</td></tr>
             <tr><td class="txn-muted">Activated</td><td align="right" class="txn-value">{{membership.activatedAt}}</td></tr>
@@ -215,13 +219,13 @@ function buildGenericMain(profile, title) {
     title,
     `
       <tr class="txn-row">
-        <td style="padding:16px 18px;">
+        <td style="padding:13px 16px;">
           <div class="txn-label">Guest</div>
           <div class="txn-value">{{guestName}}</div>
         </td>
       </tr>
       <tr>
-        <td style="padding:16px 18px;">
+        <td style="padding:13px 16px;">
           <div class="txn-label">Reference</div>
           <div class="txn-value">{{bookingNumber}}</div>
           <div class="txn-muted" style="margin-top:8px;">{{venueName}}</div>
@@ -266,54 +270,54 @@ function buildTransactionalSystemDesign(row = {}) {
   return {
     schemaVersion: 1,
     settings: {
-      contentWidth: 640,
-      backgroundColor: "#EEF2F7",
+      contentWidth: 600,
+      backgroundColor: "#F5F1EC",
       bodyColor: "#ffffff",
       fontFamily: "Arial, Helvetica, sans-serif",
-      fontSize: 16,
-      textColor: "#111827",
-      headingColor: "#111827",
+      fontSize: 15,
+      textColor: "#1A1614",
+      headingColor: "#1A1614",
       linkColor: profile.accent,
       buttonColor: profile.accent,
-      dividerColor: "#E5E7EB",
+      dividerColor: "#ECE7E1",
       customCss:
-        "@media only screen and (max-width:480px){.txn-total{font-size:22px!important}.txn-card{border-radius:0!important}}",
+        "@media only screen and (max-width:480px){.txn-total{font-size:20px!important}.txn-card{border-radius:0!important}}",
     },
     sections: [
-      section("sys_header", "2-3:1-3", { backgroundColor: "#ffffff", padding: { top: 22, right: 28, bottom: 18, left: 28 } }, [
+      section("sys_header", "2-3:1-3", { backgroundColor: "#ffffff", padding: { top: 18, right: 24, bottom: 14, left: 24 } }, [
         column("sys_header_brand", "66.66%", [
-          text("sys_brand", "{{venueName}}", { fontSize: 18, fontWeight: 800, color: "#111827", padding: { top: 0, right: 0, bottom: 0, left: 0 } }),
-          text("sys_address", "{{locationAddress}}", { fontSize: 12, color: "#64748B", padding: { top: 4, right: 0, bottom: 0, left: 0 } }),
+          text("sys_brand", "{{venueName}}", { fontSize: 17, fontWeight: 800, color: "#1A1614", padding: { top: 0, right: 0, bottom: 0, left: 0 } }),
+          text("sys_address", "{{locationAddress}}", { fontSize: 12, color: "#8A8079", padding: { top: 3, right: 0, bottom: 0, left: 0 } }),
         ]),
         column("sys_header_meta", "33.33%", [
-          text("sys_booking_ref", "#{{bookingNumber}}", { align: "right", fontSize: 12, color: "#475569", blockBackgroundColor: "#F8FAFC", borderRadius: 999, padding: { top: 8, right: 12, bottom: 8, left: 12 } }),
+          text("sys_booking_ref", "#{{bookingNumber}}", { align: "right", fontSize: 12, fontWeight: 700, color: profile.accent, blockBackgroundColor: profile.soft, borderRadius: 999, padding: { top: 7, right: 12, bottom: 7, left: 12 } }),
         ]),
       ]),
-      section("sys_hero", "2-3:1-3", { backgroundColor: profile.accent, padding: { top: 34, right: 34, bottom: 34, left: 34 } }, [
+      section("sys_hero", "2-3:1-3", { backgroundColor: profile.accent, padding: { top: 26, right: 28, bottom: 26, left: 28 } }, [
         column("sys_hero_copy", "66.66%", [
-          heading("sys_heading", headingText, { fontSize: 38, lineHeight: "1.05", fontWeight: 800, color: "#ffffff", padding: { top: 0, right: 10, bottom: 12, left: 0 } }),
-          text("sys_intro", paragraph, { fontSize: 15, lineHeight: "1.55", color: "#ffffff", padding: { top: 0, right: 10, bottom: 0, left: 0 } }),
+          heading("sys_heading", headingText, { fontSize: 26, lineHeight: "1.15", fontWeight: 800, color: "#ffffff", padding: { top: 0, right: 10, bottom: 8, left: 0 } }),
+          text("sys_intro", paragraph, { fontSize: 14, lineHeight: "1.5", color: "#ffffff", padding: { top: 0, right: 10, bottom: 0, left: 0 } }),
         ]),
         column("sys_hero_qr", "33.33%", [
-          image("sys_qr", "{{qrCodeUrl}}", { align: "right", width: 128, alt: "Booking QR code", borderRadius: 8, padding: { top: 2, right: 0, bottom: 10, left: 0 } }),
-          text("sys_qr_hint", "Show this at check-in", { align: "right", fontSize: 12, color: "#ffffff", padding: { top: 0, right: 0, bottom: 0, left: 0 } }),
+          image("sys_qr", "{{qrCodeUrl}}", { align: "right", width: 104, alt: "Booking QR code", borderRadius: 8, padding: { top: 2, right: 0, bottom: 8, left: 0 } }),
+          text("sys_qr_hint", "Show this at check-in", { align: "right", fontSize: 11, color: "#ffffff", padding: { top: 0, right: 0, bottom: 0, left: 0 } }),
         ]),
       ]),
-      section("sys_facts", "3", { backgroundColor: profile.dark, padding: { top: 20, right: 34, bottom: 20, left: 34 } }, [
+      section("sys_facts", "3", { backgroundColor: profile.dark, padding: { top: 15, right: 28, bottom: 15, left: 28 } }, [
         column("sys_fact_when", "33.33%", [
-          text("sys_fact_when_label", "WHEN", { fontSize: 10, fontWeight: 800, color: "#CBD5E1", padding: { top: 0, right: 8, bottom: 6, left: 0 } }),
-          text("sys_fact_when_value", "{{bookingDate}}", { fontSize: 14, fontWeight: 800, color: "#ffffff", padding: { top: 0, right: 8, bottom: 0, left: 0 } }),
+          text("sys_fact_when_label", "WHEN", { fontSize: 10, fontWeight: 800, color: "#E8D6C6", padding: { top: 0, right: 8, bottom: 5, left: 0 } }),
+          text("sys_fact_when_value", "{{bookingDate}}", { fontSize: 13, fontWeight: 800, color: "#ffffff", padding: { top: 0, right: 8, bottom: 0, left: 0 } }),
         ]),
         column("sys_fact_where", "33.33%", [
-          text("sys_fact_where_label", "WHERE", { fontSize: 10, fontWeight: 800, color: "#CBD5E1", padding: { top: 0, right: 8, bottom: 6, left: 0 } }),
-          text("sys_fact_where_value", "{{venueName}}", { fontSize: 14, fontWeight: 800, color: "#ffffff", padding: { top: 0, right: 8, bottom: 0, left: 0 } }),
+          text("sys_fact_where_label", "WHERE", { fontSize: 10, fontWeight: 800, color: "#E8D6C6", padding: { top: 0, right: 8, bottom: 5, left: 0 } }),
+          text("sys_fact_where_value", "{{venueName}}", { fontSize: 13, fontWeight: 800, color: "#ffffff", padding: { top: 0, right: 8, bottom: 0, left: 0 } }),
         ]),
         column("sys_fact_total", "33.33%", [
-          text("sys_fact_total_label", "TOTAL", { fontSize: 10, fontWeight: 800, color: "#CBD5E1", padding: { top: 0, right: 0, bottom: 6, left: 0 } }),
-          text("sys_fact_total_value", "{{totalAmount}}", { fontSize: 14, fontWeight: 800, color: "#ffffff", padding: { top: 0, right: 0, bottom: 0, left: 0 } }),
+          text("sys_fact_total_label", "TOTAL", { fontSize: 10, fontWeight: 800, color: "#E8D6C6", padding: { top: 0, right: 0, bottom: 5, left: 0 } }),
+          text("sys_fact_total_value", "{{totalAmount}}", { fontSize: 13, fontWeight: 800, color: "#ffffff", padding: { top: 0, right: 0, bottom: 0, left: 0 } }),
         ]),
       ]),
-      section("sys_main", "1", { backgroundColor: "#ffffff", padding: { top: 30, right: 34, bottom: 28, left: 34 } }, [
+      section("sys_main", "1", { backgroundColor: "#ffffff", padding: { top: 24, right: 24, bottom: 22, left: 24 } }, [
         column("sys_main_col", "100%", [
           code("sys_main_card", mainHtml),
           ...(action
@@ -322,25 +326,27 @@ function buildTransactionalSystemDesign(row = {}) {
                   backgroundColor: profile.accent,
                   color: "#ffffff",
                   align: "left",
-                  padding: { top: 18, right: 0, bottom: 4, left: 0 },
+                  fontSize: 13,
+                  paddingY: 11,
+                  padding: { top: 16, right: 0, bottom: 4, left: 0 },
                 }),
               ]
             : []),
-          divider("sys_divider", { color: "#E5E7EB", height: 1, padding: { top: 24, right: 0, bottom: 18, left: 0 } }),
+          divider("sys_divider", { color: "#ECE7E1", height: 1, padding: { top: 20, right: 0, bottom: 16, left: 0 } }),
           text("sys_support", "Need help? Contact us at <a href=\"mailto:{{locationEmail}}\">{{locationEmail}}</a> or {{locationPhone}}.", {
             fontSize: 13,
-            color: "#64748B",
-            lineHeight: "1.55",
+            color: "#8A8079",
+            lineHeight: "1.5",
             padding: { top: 0, right: 0, bottom: 0, left: 0 },
           }),
         ]),
       ]),
-      section("sys_footer", "1", { backgroundColor: "#F8FAFC", padding: { top: 24, right: 34, bottom: 28, left: 34 } }, [
+      section("sys_footer", "1", { backgroundColor: "#FBF7F2", padding: { top: 20, right: 24, bottom: 22, left: 24 } }, [
         column("sys_footer_col", "100%", [
           footer("sys_footer_text", "{{venueName}}<br>{{locationAddress}}<br>{{locationPhone}} {{locationEmail}}<br><br>Powered by Movira CRM", {
             align: "left",
             fontSize: 12,
-            color: "#64748B",
+            color: "#8A8079",
             lineHeight: "1.6",
           }),
         ]),
