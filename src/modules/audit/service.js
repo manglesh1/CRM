@@ -12,6 +12,10 @@ const ALLOWED_ENTITY_TYPES = new Set([
   "transactional_template",
   "transactional_message",
   "notification_binding",
+  "crm_contact",
+  "crm_contact_tag",
+  "crm_segment",
+  "crm_import_job",
   "system",
 ]);
 

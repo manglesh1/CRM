@@ -32,6 +32,68 @@ function plain(row) {
   return row?.get ? row.get({ plain: true }) : row;
 }
 
+async function resolveEventContact(models, locationId, event = {}) {
+  if (event.contactId) {
+    const contact = await models.CrmContact.findOne({ where: { id: event.contactId, locationId } });
+    if (contact) return contact;
+  }
+  const email = String(event.email || event.recipient?.email || event.payload?.email || event.payload?.guestEmail || "").trim().toLowerCase();
+  if (email) {
+    const contact = await models.CrmContact.findOne({ where: { locationId, normalizedEmail: email } });
+    if (contact) return contact;
+  }
+  const phone = String(event.phone || event.recipient?.phone || event.payload?.phone || event.payload?.guestPhone || "").replace(/[^\d+]/g, "").trim();
+  if (phone) {
+    const contact = await models.CrmContact.findOne({ where: { locationId, normalizedPhone: phone } });
+    if (contact) return contact;
+  }
+  return null;
+}
+
+function eventMatchesWorkflow(workflow, event = {}) {
+  const settings = workflow.settings || {};
+  if (settings.segmentId && event.segmentId && String(settings.segmentId) !== String(event.segmentId)) return false;
+  if (settings.tag && event.tag && String(settings.tag).toLowerCase() !== String(event.tag).toLowerCase()) return false;
+  return true;
+}
+
+async function executeWorkflowForContact(models, workflow, contact, input = {}) {
+  const data = plain(workflow);
+  const result = await engine.runForContact(workflow, contact, { dryRun: false });
+  const run = await models.CrmAutomationRun.create({
+    workflowId: workflow.id,
+    locationId: data.locationId,
+    contactId: contact.id,
+    runType: input.runType || "production",
+    status: result.status,
+    triggerKey: data.triggerKey,
+    currentNodeId: result.currentNodeId,
+    input,
+    result: { steps: result.steps },
+    startedAt: new Date(),
+    completedAt: new Date(),
+  });
+  return { run, result };
+}
+
+async function updateWorkflowRunStats(workflow, summary) {
+  const data = plain(workflow);
+  const stats = data.stats || {};
+  const totalRuns = Number(stats.runs || 0) + Number(summary.enrolled || 0);
+  const succeededTotal = Number(stats.succeeded || 0) + Number(summary.succeeded || 0);
+  await workflow.update({
+    stats: {
+      ...stats,
+      enrolled: Number(stats.enrolled || 0) + Number(summary.enrolled || 0),
+      runs: totalRuns,
+      succeeded: succeededTotal,
+      stopped: Number(stats.stopped || 0) + Number(summary.stopped || 0),
+      failed: Number(stats.failed || 0) + Number(summary.failed || 0),
+      successRate: totalRuns ? `${Math.round((succeededTotal / totalRuns) * 100)}%` : "0%",
+    },
+  });
+}
+
 function cleanNodes(nodes, depth = 0) {
   if (!Array.isArray(nodes)) return [];
   return nodes.slice(0, 80).map((node, index) => {
@@ -258,38 +320,58 @@ async function enrollWorkflow(id, input = {}) {
   if (!contacts.length) return summary;
 
   for (const contact of contacts) {
-    const result = await engine.runForContact(workflow, contact, { dryRun: false });
-    await models.CrmAutomationRun.create({
-      workflowId: workflow.id,
-      locationId,
-      contactId: contact.id,
-      runType: "production",
-      status: result.status,
-      triggerKey: data.triggerKey,
-      currentNodeId: result.currentNodeId,
-      input: { source: input.source || "manual_enroll" },
-      result: { steps: result.steps },
-      startedAt: new Date(),
-      completedAt: new Date(),
-    });
+    const { result } = await executeWorkflowForContact(models, workflow, contact, { source: input.source || "manual_enroll" });
     summary.enrolled += 1;
     if (result.status === "success") summary.succeeded += 1;
     else if (result.status === "stopped") summary.stopped += 1;
     else summary.failed += 1;
   }
 
-  const stats = data.stats || {};
-  const totalRuns = Number(stats.runs || 0) + summary.enrolled;
-  const succeededTotal = Number(stats.succeeded || 0) + summary.succeeded;
-  await workflow.update({
-    stats: {
-      ...stats,
-      enrolled: Number(stats.enrolled || 0) + summary.enrolled,
-      runs: totalRuns,
-      succeeded: succeededTotal,
-      successRate: totalRuns ? `${Math.round((succeededTotal / totalRuns) * 100)}%` : "0%",
-    },
+  await updateWorkflowRunStats(workflow, summary);
+  return summary;
+}
+
+async function triggerWorkflowsForEvent(event = {}) {
+  const models = getModels();
+  const locationId = requireLocation(event.locationId);
+  const eventType = cleanString(event.eventType || event.triggerKey, 120);
+  if (!eventType) throw badRequest("eventType is required");
+
+  const contact = await resolveEventContact(models, locationId, event);
+  if (!contact) return { eventType, matched: 0, enrolled: 0, succeeded: 0, stopped: 0, failed: 0, skipped: "contact_not_found" };
+
+  const workflows = await models.CrmAutomationWorkflow.findAll({
+    where: { locationId, status: "published", triggerKey: eventType },
+    order: [["updatedAt", "DESC"]],
   });
+  const matched = workflows.filter((workflow) => eventMatchesWorkflow(plain(workflow), event));
+  const summary = { eventType, contactId: contact.id, matched: matched.length, enrolled: 0, succeeded: 0, stopped: 0, failed: 0 };
+
+  for (const workflow of matched) {
+    try {
+      const { result } = await executeWorkflowForContact(models, workflow, contact, {
+        source: event.source || "event",
+        eventType,
+        eventId: event.eventId || event.idempotencyKey || null,
+        segmentId: event.segmentId || null,
+        tag: event.tag || null,
+        payload: event.payload || {},
+      });
+      summary.enrolled += 1;
+      if (result.status === "success") summary.succeeded += 1;
+      else if (result.status === "stopped") summary.stopped += 1;
+      else summary.failed += 1;
+      await updateWorkflowRunStats(workflow, {
+        enrolled: 1,
+        succeeded: result.status === "success" ? 1 : 0,
+        stopped: result.status === "stopped" ? 1 : 0,
+        failed: result.status === "failed" ? 1 : 0,
+      });
+    } catch (_err) {
+      summary.failed += 1;
+    }
+  }
+
   return summary;
 }
 
@@ -334,5 +416,6 @@ module.exports = {
   listRuns,
   listWorkflows,
   testWorkflow,
+  triggerWorkflowsForEvent,
   updateWorkflow,
 };

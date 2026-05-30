@@ -101,6 +101,7 @@ async function refreshSegmentMembers(segment, transaction = null) {
     attributes: ["contactId", "source"],
     transaction,
   });
+  const existingActiveIds = new Set(existingMembers.map((m) => m.contactId));
   const manualIds = new Set(existingMembers.filter((m) => m.source === "manual").map((m) => m.contactId));
 
   await models.CrmSegmentMember.destroy({
@@ -130,7 +131,9 @@ async function refreshSegmentMembers(segment, transaction = null) {
     },
     { transaction }
   );
-  return plain(updated);
+  const nextIds = new Set([...manualIds, ...filterIds]);
+  const enteredContactIds = Array.from(nextIds).filter((id) => !existingActiveIds.has(id));
+  return { ...plain(updated), enteredContactIds };
 }
 
 async function listSegments(query = {}) {

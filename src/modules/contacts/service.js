@@ -2,6 +2,7 @@ const { Op } = require("sequelize");
 const config = require("../../config");
 const { getModels } = require("../../db/models");
 const segmentService = require("../segments/service");
+const contactFieldService = require("../contactFields/service");
 const filterEngine = require("./filterEngine");
 const catalog = require("./fieldCatalog");
 
@@ -9,7 +10,6 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const VALID_SOURCE_TYPES = new Set(["movira", "csv", "manual", "form", "api", "webhook", "imported"]);
 const VALID_MARKETING_STATUSES = new Set(["subscribed", "unsubscribed", "bounced", "complained", "unknown"]);
 const VALID_LIFECYCLES = new Set(["lead", "customer", "member", "guest", "prospect", "inactive", "vip"]);
-const STALE_SEGMENT_NAMES = ["movira customers", "subscribed imported customers"];
 
 function badRequest(message, errors = []) {
   const err = new Error(message);
@@ -68,8 +68,44 @@ function normalizeTags(tags) {
   return Array.from(new Set(list.map((item) => cleanString(item, 80)).filter(Boolean)));
 }
 
+function normalizeTagName(tag) {
+  return cleanString(tag, 80);
+}
+
+function tagKey(tag) {
+  return String(tag || "").trim().toLowerCase();
+}
+
+function cleanColor(value) {
+  const color = cleanString(value, 20);
+  if (!color) return null;
+  return /^#[0-9a-f]{6}$/i.test(color) ? color : null;
+}
+
 function mergeTags(existing = [], incoming = []) {
-  return Array.from(new Set([...normalizeTags(existing), ...normalizeTags(incoming)]));
+  const next = [];
+  [...normalizeTags(existing), ...normalizeTags(incoming)].forEach((tag) => {
+    if (!next.some((item) => tagKey(item) === tagKey(tag))) next.push(tag);
+  });
+  return next;
+}
+
+function diffTags(before = [], after = []) {
+  const beforeSet = new Set(normalizeTags(before).map(tagKey));
+  const afterList = normalizeTags(after);
+  return afterList.filter((tag) => !beforeSet.has(tagKey(tag)));
+}
+
+async function ensureContactTags(models, locationId, tags, transaction) {
+  for (const tag of normalizeTags(tags)) {
+    const name = normalizeTagName(tag);
+    if (!name) continue;
+    await models.CrmContactTag.findOrCreate({
+      where: { locationId, normalizedName: tagKey(name) },
+      defaults: { locationId, name, normalizedName: tagKey(name) },
+      transaction,
+    });
+  }
 }
 
 function plain(row) {
@@ -179,7 +215,9 @@ async function upsertContact(input = {}) {
     const existing = await findExistingContact(models, payload, provisionalIdentity, transaction);
     let contact;
     let created = false;
+    let previousTags = [];
     if (existing) {
+      previousTags = normalizeTags(existing.tags);
       const next = {
         ...payload,
         fullName: payload.fullName || existing.fullName,
@@ -214,7 +252,8 @@ async function upsertContact(input = {}) {
       });
     }
 
-    return { contact: plain(contact), created };
+    const contactData = plain(contact);
+    return { contact: contactData, created, tagsAdded: created ? normalizeTags(contactData.tags) : diffTags(previousTags, contactData.tags) };
   });
 }
 
@@ -226,11 +265,7 @@ async function listContacts(query = {}) {
   const where = { locationId };
   const q = cleanString(query.search, 120);
 
-  if (query.includeAllSources === true || query.includeAllSources === "true") {
-    if (query.sourceType) where.sourceType = cleanString(query.sourceType, 40);
-  } else {
-    where.sourceType = cleanString(query.sourceType || "movira", 40);
-  }
+  if (query.sourceType) where.sourceType = cleanString(query.sourceType, 40);
   if (query.marketingStatus) where.marketingStatus = cleanString(query.marketingStatus, 40);
   if (q) {
     where[Op.or] = [
@@ -271,6 +306,7 @@ async function updateContact(id, input = {}) {
   const locationId = requireLocation(input.locationId);
   const contact = await models.CrmContact.findOne({ where: { id, locationId } });
   if (!contact) throw notFound("Contact");
+  const previousTags = normalizeTags(contact.tags);
   const payload = contactPayload({ ...plain(contact), ...input }, locationId);
   const updated = await contact.update({
     ...payload,
@@ -282,7 +318,8 @@ async function updateContact(id, input = {}) {
       ? { ...(contact.sourceSnapshot || {}), ...input.sourceSnapshot }
       : contact.sourceSnapshot,
   });
-  return plain(updated);
+  const data = plain(updated);
+  return { ...data, tagsAdded: diffTags(previousTags, data.tags) };
 }
 
 function parseCsvLine(line) {
@@ -333,8 +370,10 @@ function mapImportRow(row = {}, defaults = {}) {
     lastName: pick("lastName", "Last Name", "lastname", "last_name"),
     email: pick("email", "Email", "guestEmail"),
     phone: pick("phone", "Phone", "guestPhone"),
+    doNotContact: ["true", "yes", "1"].includes(String(pick("doNotContact", "Do Not Contact", "do_not_contact") || "").trim().toLowerCase()),
     tags: pick("tags", "Tags"),
     lifecycle: pick("lifecycle", "Lifecycle", "type") || defaults.lifecycle,
+    marketingStatus: pick("marketingStatus", "Marketing Status", "marketing_status") || defaults.marketingStatus,
     sourceRefType: pick("sourceRefType", "externalType"),
     sourceRefId: pick("sourceRefId", "externalId", "id", "ID"),
     customFields: row.customFields && typeof row.customFields === "object" ? row.customFields : {},
@@ -351,7 +390,9 @@ function mapCoreCustomerToContact(customer = {}, defaults = {}) {
 
   return {
     ...defaults,
-    fullName: customer.name,
+    fullName: customer.name || customer.guestName || customer.fullName,
+    firstName: customer.firstName,
+    lastName: customer.lastName,
     email: customer.email,
     phone: customer.phone,
     sourceType: "movira",
@@ -368,11 +409,18 @@ function mapCoreCustomerToContact(customer = {}, defaults = {}) {
       address: customer.address || null,
       postcode: customer.postcode || null,
       gender: customer.gender || null,
+      locationId: Number(customer.locationId || defaults.locationId || 0) || null,
+      locationName: customer.locationName || customer.location?.legalBusinessName || customer.location?.name || customer.venueName || customer.locationSlug || (customer.locationId || defaults.locationId ? `Location ${customer.locationId || defaults.locationId}` : null),
+      locationSlug: customer.locationSlug || customer.location?.slug || null,
+      locationAddress: customer.locationAddress || customer.location?.displayAddress || null,
+      source: customer.source || "booking",
+      dateOfBirth: customer.dateOfBirth || customer.dob || customer.guestDateOfBirth || null,
       bookingCount: Number(customer.bookingCount || 0),
       totalSpend: Number(customer.totalSpend || 0),
       totalDiscount: Number(customer.totalDiscount || 0),
       visitCount: Number(customer.visitCount || 0),
       lastVisit: customer.lastVisit || null,
+      lastBookingDate: customer.lastBookingDate || customer.lastVisit || null,
       waiverStatus: customer.waiverStatus || "none",
       engagementScore: Number(customer.engagementScore || 0),
       ...(customer.customAttributes && typeof customer.customAttributes === "object" ? customer.customAttributes : {}),
@@ -422,34 +470,8 @@ async function syncMoviraCustomers(input = {}) {
   let skippedCount = 0;
   let totalRows = 0;
   const synced = [];
-
-  await models.sequelize.transaction(async (transaction) => {
-    const nonMoviraContacts = await models.CrmContact.findAll({
-      where: { locationId, sourceType: { [Op.ne]: "movira" } },
-      attributes: ["id"],
-      transaction,
-    });
-    const contactIds = nonMoviraContacts.map((contact) => contact.id);
-    if (contactIds.length) {
-      await models.CrmSegmentMember.destroy({ where: { locationId, contactId: { [Op.in]: contactIds } }, transaction });
-      await models.CrmContactIdentity.destroy({ where: { locationId, contactId: { [Op.in]: contactIds } }, transaction });
-      await models.CrmContact.destroy({ where: { locationId, id: { [Op.in]: contactIds } }, transaction });
-    }
-    await models.CrmContactImportJob.destroy({ where: { locationId, sourceType: { [Op.ne]: "movira" } }, transaction });
-
-    const staleSegments = await models.CrmSegment.findAll({
-      where: { locationId },
-      attributes: ["id", "name"],
-      transaction,
-    });
-    const staleSegmentIds = staleSegments
-      .filter((segment) => STALE_SEGMENT_NAMES.includes(String(segment.name || "").trim().toLowerCase()))
-      .map((segment) => segment.id);
-    if (staleSegmentIds.length) {
-      await models.CrmSegmentMember.destroy({ where: { locationId, segmentId: { [Op.in]: staleSegmentIds } }, transaction });
-      await models.CrmSegment.destroy({ where: { locationId, id: { [Op.in]: staleSegmentIds } }, transaction });
-    }
-  });
+  const automationEvents = [];
+  await contactFieldService.ensureSystemFields(locationId);
 
   for (let page = 1; page <= maxPages; page += 1) {
     const body = await fetchCoreCustomersPage({ authorization, locationId, page, limit, search });
@@ -464,6 +486,17 @@ async function syncMoviraCustomers(input = {}) {
         if (result.created) createdCount += 1;
         else updatedCount += 1;
         synced.push(result.contact);
+        automationEvents.push({
+          eventType: result.created ? "customer.created" : "contact.changed",
+          contactId: result.contact.id,
+          payload: { sourceType: result.contact.sourceType, source: "movira_sync" },
+        });
+        (result.tagsAdded || []).forEach((tag) => automationEvents.push({
+          eventType: "contact.tag_added",
+          contactId: result.contact.id,
+          tag,
+          payload: { source: "movira_sync" },
+        }));
       } catch (err) {
         skippedCount += 1;
         errors.push({ page, row: index + 1, sourceId: rows[index]?.id || rows[index]?.guestId, message: err.message });
@@ -507,7 +540,19 @@ async function syncMoviraCustomers(input = {}) {
     job: plain(job),
     contacts: synced.slice(0, 25),
     refreshedSegments: dynamicSegments.length,
+    automationEvents,
   };
+}
+
+async function refreshDynamicSegmentsForLocation(models, locationId) {
+  const dynamicSegments = await models.CrmSegment.findAll({
+    where: { locationId, segmentType: "dynamic", status: "active" },
+    attributes: ["id"],
+  });
+  for (const segment of dynamicSegments) {
+    await segmentService.refreshSegment(segment.id, { locationId });
+  }
+  return dynamicSegments.length;
 }
 
 async function importContacts(input = {}) {
@@ -516,12 +561,14 @@ async function importContacts(input = {}) {
   const sourceType = cleanString(input.sourceType || "csv", 40) || "csv";
   const rows = Array.isArray(input.contacts) ? input.contacts : parseCsvText(input.csvText);
   if (!rows.length) throw badRequest("contacts or csvText is required");
+  await contactFieldService.ensureSystemFields(locationId);
 
   const errors = [];
   let createdCount = 0;
   let updatedCount = 0;
   let skippedCount = 0;
   const imported = [];
+  const automationEvents = [];
 
   for (let index = 0; index < rows.length; index += 1) {
     try {
@@ -529,12 +576,24 @@ async function importContacts(input = {}) {
         locationId,
         sourceType,
         lifecycle: input.lifecycle || "lead",
+        marketingStatus: input.marketingStatus || "subscribed",
         provider: sourceType,
       });
       const result = await upsertContact(mapped);
       if (result.created) createdCount += 1;
       else updatedCount += 1;
       imported.push(result.contact);
+      automationEvents.push({
+        eventType: result.created ? "customer.created" : "contact.changed",
+        contactId: result.contact.id,
+        payload: { sourceType, source: "contact_import" },
+      });
+      (result.tagsAdded || []).forEach((tag) => automationEvents.push({
+        eventType: "contact.tag_added",
+        contactId: result.contact.id,
+        tag,
+        payload: { source: "contact_import" },
+      }));
     } catch (err) {
       skippedCount += 1;
       errors.push({ row: index + 1, message: err.message });
@@ -555,7 +614,7 @@ async function importContacts(input = {}) {
     errors,
   });
 
-  return { job: plain(job), contacts: imported.slice(0, 25) };
+  return { job: plain(job), contacts: imported.slice(0, 25), automationEvents };
 }
 
 async function listImportJobs(query = {}) {
@@ -563,11 +622,7 @@ async function listImportJobs(query = {}) {
   const locationId = requireLocation(query.locationId);
   const limit = Math.min(50, Math.max(1, Number(query.limit || 20)));
   const where = { locationId };
-  if (query.includeAllSources === true || query.includeAllSources === "true") {
-    if (query.sourceType) where.sourceType = cleanString(query.sourceType, 40);
-  } else {
-    where.sourceType = cleanString(query.sourceType || "movira", 40);
-  }
+  if (query.sourceType) where.sourceType = cleanString(query.sourceType, 40);
   const jobs = await models.CrmContactImportJob.findAll({
     where,
     limit,
@@ -579,14 +634,16 @@ async function listImportJobs(query = {}) {
 async function getContactStats(query = {}) {
   const models = getModels();
   const locationId = requireLocation(query.locationId);
-  const sourceWhere = query.includeAllSources === true || query.includeAllSources === "true" ? { locationId } : { locationId, sourceType: "movira" };
-  const [total, subscribed, doNotContact, movira] = await Promise.all([
+  const sourceWhere = query.sourceType ? { locationId, sourceType: cleanString(query.sourceType, 40) } : { locationId };
+  const [total, subscribed, doNotContact, movira, csv, manual] = await Promise.all([
     models.CrmContact.count({ where: sourceWhere }),
     models.CrmContact.count({ where: { ...sourceWhere, marketingStatus: "subscribed", doNotContact: false } }),
     models.CrmContact.count({ where: { ...sourceWhere, doNotContact: true } }),
     models.CrmContact.count({ where: { locationId, sourceType: "movira" } }),
+    models.CrmContact.count({ where: { locationId, sourceType: "csv" } }),
+    models.CrmContact.count({ where: { locationId, sourceType: "manual" } }),
   ]);
-  return { total, subscribed, doNotContact, movira };
+  return { total, subscribed, doNotContact, movira, csv, manual };
 }
 
 async function loadCustomFields(locationId) {
@@ -727,17 +784,24 @@ async function bulkUpdateContacts(input = {}) {
   if (action === "add_tags" || action === "remove_tags") {
     const tags = normalizeTags(input.tags);
     if (!tags.length) throw badRequest("tags is required");
-    const removeSet = new Set(tags);
+    const removeSet = new Set(tags.map(tagKey));
     const contacts = await models.CrmContact.findAll({ where: scope });
+    const addedEvents = [];
     await models.sequelize.transaction(async (transaction) => {
+      if (action === "add_tags") await ensureContactTags(models, locationId, tags, transaction);
       for (const contact of contacts) {
+        const before = normalizeTags(contact.tags);
         const next = action === "add_tags"
           ? mergeTags(contact.tags, tags)
-          : normalizeTags(contact.tags).filter((tag) => !removeSet.has(tag));
+          : normalizeTags(contact.tags).filter((tag) => !removeSet.has(tagKey(tag)));
         await contact.update({ tags: next }, { transaction });
+        if (action === "add_tags") {
+          diffTags(before, next).forEach((tag) => addedEvents.push({ contactId: contact.id, tag }));
+        }
       }
     });
-    return { action, affected: contacts.length };
+    const refreshedSegments = await refreshDynamicSegmentsForLocation(models, locationId);
+    return { action, affected: contacts.length, refreshedSegments, tagsAdded: addedEvents };
   }
 
   if (action === "add_to_segment") {
@@ -760,7 +824,7 @@ async function bulkUpdateContacts(input = {}) {
       });
       await segment.update({ memberCount }, { transaction });
     });
-    return { action, affected: ids.length, segmentId: segment.id };
+    return { action, affected: ids.length, segmentId: segment.id, memberContactIds: ids };
   }
 
   throw badRequest(`Unsupported bulk action: ${action}`);
@@ -772,20 +836,178 @@ async function listContactTags(query = {}) {
   const locationId = requireLocation(query.locationId);
   const search = cleanString(query.search, 80);
   const limit = Math.min(200, Math.max(1, Number(query.limit || 100)));
+  const detailed = query.detailed === true || query.detailed === "true";
+  const page = Math.max(1, Number(query.page || 1));
+  const pageSize = Math.min(100, Math.max(1, Number(query.pageSize || limit || 25)));
+
   const rows = await models.sequelize.query(
-    `SELECT DISTINCT tag FROM (
+    `SELECT tag, COUNT(*)::int AS "contactCount" FROM (
        SELECT jsonb_array_elements_text(tags) AS tag
        FROM crm_contacts WHERE "locationId" = :locationId
      ) t
      WHERE tag <> ''${search ? " AND tag ILIKE :search" : ""}
-     ORDER BY tag ASC
-     LIMIT :limit`,
+     GROUP BY tag
+     ORDER BY tag ASC`,
     {
-      replacements: { locationId, limit, ...(search ? { search: `%${search}%` } : {}) },
+      replacements: { locationId, ...(search ? { search: `%${search}%` } : {}) },
       type: models.sequelize.QueryTypes.SELECT,
     }
   );
-  return rows.map((row) => row.tag);
+
+  if (!detailed) return rows.slice(0, limit).map((row) => row.tag);
+
+  const registryWhere = { locationId };
+  if (search) {
+    registryWhere[Op.or] = [
+      { name: { [Op.iLike]: `%${search}%` } },
+      { description: { [Op.iLike]: `%${search}%` } },
+    ];
+  }
+  const registryRows = await models.CrmContactTag.findAll({ where: registryWhere, order: [["name", "ASC"]] });
+  const byKey = new Map();
+  rows.forEach((row) => {
+    const name = normalizeTagName(row.tag);
+    if (!name) return;
+    byKey.set(tagKey(name), {
+      id: null,
+      name,
+      normalizedName: tagKey(name),
+      description: null,
+      color: null,
+      contactCount: Number(row.contactCount || 0),
+      source: "contacts",
+      createdAt: null,
+      updatedAt: null,
+    });
+  });
+  registryRows.map(plain).forEach((tag) => {
+    const key = tagKey(tag.normalizedName || tag.name);
+    const existing = byKey.get(key);
+    byKey.set(key, {
+      ...existing,
+      ...tag,
+      normalizedName: key,
+      contactCount: existing?.contactCount || 0,
+      source: existing ? "registry_contacts" : "registry",
+    });
+  });
+
+  const items = Array.from(byKey.values()).sort((a, b) => a.name.localeCompare(b.name));
+  const start = (page - 1) * pageSize;
+  return {
+    items: items.slice(start, start + pageSize),
+    page,
+    pageSize,
+    total: items.length,
+  };
+}
+
+async function createContactTag(input = {}) {
+  const models = getModels();
+  const locationId = requireLocation(input.locationId);
+  const name = normalizeTagName(input.name);
+  if (!name) throw badRequest("Tag name is required");
+  const normalizedName = tagKey(name);
+  const payload = {
+    locationId,
+    name,
+    normalizedName,
+    description: cleanString(input.description, 500),
+    color: cleanColor(input.color),
+    createdBy: cleanString(input.createdBy, 120),
+  };
+  const [tag, created] = await models.CrmContactTag.findOrCreate({
+    where: { locationId, normalizedName },
+    defaults: payload,
+  });
+  if (!created) {
+    const updated = await tag.update({
+      name,
+      description: input.description === undefined ? tag.description : payload.description,
+      color: input.color === undefined ? tag.color : payload.color,
+    });
+    return plain(updated);
+  }
+  return plain(tag);
+}
+
+async function updateContactTag(tagName, input = {}) {
+  const models = getModels();
+  const locationId = requireLocation(input.locationId);
+  const currentName = normalizeTagName(tagName || input.currentName || input.oldName);
+  const nextName = normalizeTagName(input.newName || input.name || currentName);
+  if (!currentName) throw badRequest("Tag name is required");
+  if (!nextName) throw badRequest("New tag name is required");
+
+  const currentKey = tagKey(currentName);
+  const nextKey = tagKey(nextName);
+  const currentRegistry = await models.CrmContactTag.findOne({ where: { locationId, normalizedName: currentKey } });
+  const collision = currentKey !== nextKey
+    ? await models.CrmContactTag.findOne({ where: { locationId, normalizedName: nextKey } })
+    : null;
+  if (collision) throw badRequest(`Tag "${nextName}" already exists`);
+
+  const result = await models.sequelize.transaction(async (transaction) => {
+    let registry = currentRegistry;
+    if (!registry) {
+      registry = await models.CrmContactTag.create({
+        locationId,
+        name: currentName,
+        normalizedName: currentKey,
+      }, { transaction });
+    }
+
+    const contacts = await models.CrmContact.findAll({ where: { locationId }, transaction });
+    let affected = 0;
+    if (currentKey !== nextKey) {
+      for (const contact of contacts) {
+        const tags = normalizeTags(contact.tags);
+        if (!tags.some((tag) => tagKey(tag) === currentKey)) continue;
+        const nextTags = [];
+        tags.forEach((tag) => {
+          const value = tagKey(tag) === currentKey ? nextName : tag;
+          if (!nextTags.some((existing) => tagKey(existing) === tagKey(value))) nextTags.push(value);
+        });
+        await contact.update({ tags: nextTags }, { transaction });
+        affected += 1;
+      }
+    }
+
+    const updated = await registry.update({
+      name: nextName,
+      normalizedName: nextKey,
+      description: input.description === undefined ? registry.description : cleanString(input.description, 500),
+      color: input.color === undefined ? registry.color : cleanColor(input.color),
+    }, { transaction });
+
+    return { tag: plain(updated), affected };
+  });
+  const refreshedSegments = await refreshDynamicSegmentsForLocation(models, locationId);
+  return { ...result, refreshedSegments };
+}
+
+async function deleteContactTag(tagName, input = {}) {
+  const models = getModels();
+  const locationId = requireLocation(input.locationId);
+  const name = normalizeTagName(tagName || input.name);
+  if (!name) throw badRequest("Tag name is required");
+  const key = tagKey(name);
+
+  const result = await models.sequelize.transaction(async (transaction) => {
+    const registry = await models.CrmContactTag.findOne({ where: { locationId, normalizedName: key }, transaction });
+    const contacts = await models.CrmContact.findAll({ where: { locationId }, transaction });
+    let affected = 0;
+    for (const contact of contacts) {
+      const tags = normalizeTags(contact.tags);
+      if (!tags.some((tag) => tagKey(tag) === key)) continue;
+      await contact.update({ tags: tags.filter((tag) => tagKey(tag) !== key) }, { transaction });
+      affected += 1;
+    }
+    if (registry) await registry.destroy({ transaction });
+    return { name, affected };
+  });
+  const refreshedSegments = await refreshDynamicSegmentsForLocation(models, locationId);
+  return { ...result, refreshedSegments };
 }
 
 function csvCell(value) {
@@ -853,6 +1075,9 @@ module.exports = {
   searchContacts,
   bulkUpdateContacts,
   listContactTags,
+  createContactTag,
+  updateContactTag,
+  deleteContactTag,
   exportContacts,
   deleteContact,
   getContact,

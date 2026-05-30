@@ -22,6 +22,7 @@ const defineCrmEventTemplateBinding = require("./CrmEventTemplateBinding");
 const defineCrmContact = require("./CrmContact");
 const defineCrmContactIdentity = require("./CrmContactIdentity");
 const defineCrmContactImportJob = require("./CrmContactImportJob");
+const defineCrmContactTag = require("./CrmContactTag");
 const defineCrmContactField = require("./CrmContactField");
 const defineCrmContactNote = require("./CrmContactNote");
 const defineCrmSegment = require("./CrmSegment");
@@ -57,6 +58,7 @@ function getModels() {
   const CrmContact = defineCrmContact(sequelize);
   const CrmContactIdentity = defineCrmContactIdentity(sequelize);
   const CrmContactImportJob = defineCrmContactImportJob(sequelize);
+  const CrmContactTag = defineCrmContactTag(sequelize);
   const CrmContactField = defineCrmContactField(sequelize);
   const CrmContactNote = defineCrmContactNote(sequelize);
   const CrmSegment = defineCrmSegment(sequelize);
@@ -140,6 +142,7 @@ function getModels() {
     CrmContact,
     CrmContactIdentity,
     CrmContactImportJob,
+    CrmContactTag,
     CrmContactField,
     CrmContactNote,
     CrmSegment,

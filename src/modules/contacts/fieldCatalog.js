@@ -44,6 +44,24 @@ const CUSTOM_FIELD_TYPES = Object.keys(CUSTOM_TYPE_TO_FILTER_TYPE);
 
 const CUSTOM_FIELD_PREFIX = "cf:";
 
+const SYSTEM_MOVIRA_FIELDS = [
+  { key: "address", label: "Address", fieldType: "textarea", showInTable: false, sortOrder: 10 },
+  { key: "postcode", label: "Postcode", fieldType: "text", showInTable: false, sortOrder: 20 },
+  { key: "gender", label: "Gender", fieldType: "dropdown", options: ["male", "female", "other"], showInTable: false, sortOrder: 30 },
+  { key: "locationId", label: "Location ID", fieldType: "number", showInTable: false, sortOrder: 40 },
+  { key: "locationName", label: "Location", fieldType: "text", showInTable: true, sortOrder: 50 },
+  { key: "source", label: "Movira source", fieldType: "text", showInTable: false, sortOrder: 60 },
+  { key: "dateOfBirth", label: "Date of birth", fieldType: "date", showInTable: false, sortOrder: 70 },
+  { key: "bookingCount", label: "Booking count", fieldType: "number", showInTable: true, sortOrder: 80 },
+  { key: "totalSpend", label: "Total spend", fieldType: "currency", showInTable: true, sortOrder: 90 },
+  { key: "totalDiscount", label: "Total discount", fieldType: "currency", showInTable: false, sortOrder: 100 },
+  { key: "visitCount", label: "Visit count", fieldType: "number", showInTable: true, sortOrder: 110 },
+  { key: "lastVisit", label: "Last visit", fieldType: "date", showInTable: true, sortOrder: 120 },
+  { key: "lastBookingDate", label: "Last booking date", fieldType: "date", showInTable: false, sortOrder: 130 },
+  { key: "waiverStatus", label: "Waiver status", fieldType: "dropdown", options: ["none", "active", "expired", "valid"], showInTable: true, sortOrder: 140 },
+  { key: "engagementScore", label: "Engagement score", fieldType: "number", showInTable: false, sortOrder: 150 },
+];
+
 // Built-in fields. `column` is the crm_contacts column. `defaultColumn` marks the
 // ones shown in the grid out of the box (the default grid layout).
 const BUILTIN_FIELDS = [
@@ -81,6 +99,7 @@ function customFieldStorageKey(key) {
 function describeCustomField(field = {}) {
   const filterType = CUSTOM_TYPE_TO_FILTER_TYPE[field.fieldType] || "string";
   return {
+    id: field.id,
     key: `${CUSTOM_FIELD_PREFIX}${field.key}`,
     storageKey: field.key,
     label: field.label,
@@ -88,6 +107,7 @@ function describeCustomField(field = {}) {
     fieldType: field.fieldType,
     options: Array.isArray(field.options) ? field.options : [],
     custom: true,
+    isSystem: Boolean(field.isSystem),
     defaultColumn: Boolean(field.showInTable),
     sortable: false,
   };
@@ -113,11 +133,13 @@ function buildCatalog(customFields = []) {
     const described = describeCustomField(field);
     return {
       key: described.key,
+      id: described.id,
       label: described.label,
       type: described.type,
       fieldType: described.fieldType,
       options: described.options,
       custom: true,
+      isSystem: described.isSystem,
       defaultColumn: described.defaultColumn,
       sortable: false,
       operators: operatorsForType(described.type),
@@ -140,6 +162,7 @@ module.exports = {
   CUSTOM_TYPE_TO_FILTER_TYPE,
   CUSTOM_FIELD_TYPES,
   CUSTOM_FIELD_PREFIX,
+  SYSTEM_MOVIRA_FIELDS,
   BUILTIN_FIELDS,
   BUILTIN_BY_KEY,
   SORTABLE_COLUMNS,

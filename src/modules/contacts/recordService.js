@@ -1,5 +1,5 @@
 // Customer "record" depth: notes, a per-contact activity timeline (built from
-// marketing + transactional messages matched by email), and duplicate
+// marketing + transactional messages plus automation runs), and duplicate
 // detection + merge. Kept separate from the high-traffic list/search service.
 
 const { Op } = require("sequelize");
@@ -107,30 +107,61 @@ function transactionalItem(message) {
   };
 }
 
+function automationItem(run) {
+  const workflow = run.workflow || {};
+  const steps = Array.isArray(run.result?.steps) ? run.result.steps : [];
+  const failedStep = steps.find((step) => step.status === "failed");
+  const stoppedStep = steps.find((step) => step.status === "stopped");
+  return {
+    id: `auto_${run.id}`,
+    channel: "automation",
+    category: "automation",
+    title: workflow.name || run.triggerKey || "Automation workflow",
+    status: run.status,
+    occurredAt: run.completedAt || run.startedAt || run.createdAt,
+    workflowId: run.workflowId,
+    workflowName: workflow.name || null,
+    trigger: workflow.triggerLabel || run.triggerKey || null,
+    runType: run.runType,
+    stepCount: steps.length,
+    error: run.error || failedStep?.detail || stoppedStep?.detail || null,
+  };
+}
+
 async function getActivity(contactId, query = {}) {
   const models = getModels();
   const locationId = requireLocation(query.locationId);
   const contact = await loadContact(models, contactId, locationId);
   const email = contact.email || contact.normalizedEmail;
-  if (!email) return { items: [], email: null };
 
   const limit = Math.min(100, Math.max(1, Number(query.limit || 60)));
-  const [marketing, transactional] = await Promise.all([
-    models.CrmMarketingMessage.findAll({
-      where: { locationId, recipient: { [Op.iLike]: email } },
+  const [marketing, transactional, automationRuns] = await Promise.all([
+    email
+      ? models.CrmMarketingMessage.findAll({
+          where: { locationId, recipient: { [Op.iLike]: email } },
+          order: [["createdAt", "DESC"]],
+          limit,
+        })
+      : [],
+    email
+      ? models.TransactionalMessage.findAll({
+          where: { locationId, recipientAddress: { [Op.iLike]: email } },
+          order: [["createdAt", "DESC"]],
+          limit,
+        })
+      : [],
+    models.CrmAutomationRun.findAll({
+      where: { locationId, contactId },
       order: [["createdAt", "DESC"]],
       limit,
-    }),
-    models.TransactionalMessage.findAll({
-      where: { locationId, recipientAddress: { [Op.iLike]: email } },
-      order: [["createdAt", "DESC"]],
-      limit,
+      include: [{ model: models.CrmAutomationWorkflow, as: "workflow", attributes: ["id", "name", "triggerLabel"] }],
     }),
   ]);
 
   const items = [
     ...marketing.map((m) => marketingItem(plain(m))),
     ...transactional.map((m) => transactionalItem(plain(m))),
+    ...automationRuns.map((run) => automationItem(plain(run))),
   ]
     .filter((item) => item.occurredAt)
     .sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt))

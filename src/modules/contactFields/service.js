@@ -61,11 +61,33 @@ function normalizeOptions(fieldType, options) {
 async function listFields(query = {}) {
   const models = getModels();
   const locationId = requireLocation(query.locationId);
+  await ensureSystemFields(locationId);
   const fields = await models.CrmContactField.findAll({
     where: { locationId, archivedAt: null },
     order: [["sortOrder", "ASC"], ["createdAt", "ASC"]],
   });
   return fields.map(plain);
+}
+
+async function ensureSystemFields(locationId) {
+  const models = getModels();
+  for (const field of catalog.SYSTEM_MOVIRA_FIELDS) {
+    const existing = await models.CrmContactField.findOne({ where: { locationId, key: field.key } });
+    const next = {
+      label: field.label,
+      fieldType: field.fieldType,
+      options: normalizeOptions(field.fieldType, field.options || []),
+      showInTable: Boolean(field.showInTable),
+      sortOrder: field.sortOrder,
+      isSystem: true,
+      archivedAt: null,
+    };
+    if (existing) {
+      await existing.update(next);
+    } else {
+      await models.CrmContactField.create({ locationId, key: field.key, ...next });
+    }
+  }
 }
 
 async function getCatalog(query = {}) {
@@ -176,6 +198,7 @@ async function deleteField(id, query = {}) {
 module.exports = {
   listFields,
   getCatalog,
+  ensureSystemFields,
   createField,
   updateField,
   reorderFields,

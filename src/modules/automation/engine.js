@@ -8,7 +8,6 @@ const marketingEmail = require("../marketing/email/service");
 
 const UPDATABLE_BUILTIN = new Set(["lifecycle", "marketingStatus", "smsStatus", "doNotContact", "firstName", "lastName", "fullName"]);
 const SKIP_REASONS = {
-  wait: "Wait steps run instantly in this engine (no scheduler yet)",
   send_sms: "SMS is not enabled in the email-only phase",
   notify_team: "Notify team is not implemented yet",
   create_task: "Tasks are not implemented yet",
@@ -118,7 +117,11 @@ async function executeNode(node, ctx) {
       const passed = evaluateCondition(contact, config);
       return step(node, passed ? "success" : "stopped", passed ? "Condition met" : "Condition not met — run stopped");
     }
-    case "wait":
+    case "wait": {
+      const amount = Number(config.amount || config.duration || 0);
+      const unit = config.unit || "minutes";
+      return step(node, "success", amount ? `Wait noted: ${amount} ${unit}` : "Wait noted");
+    }
     case "send_sms":
     case "notify_team":
     case "create_task":

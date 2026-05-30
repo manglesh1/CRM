@@ -4,6 +4,8 @@ const { buildVariables } = require("./variableMapper");
 const { validateIngestEvent, validateBindingInput } = require("./validation");
 const transactionalService = require("../transactional/service");
 const auditService = require("../audit/service");
+const contactService = require("../contacts/service");
+const automationService = require("../automation/service");
 
 async function safeAudit(input) {
   try {
@@ -67,6 +69,78 @@ async function ingestEvent(body) {
   };
 
   const result = await transactionalService.enqueueMessage(transactionalRequest);
+  if (result.duplicate) {
+    return {
+      duplicate: true,
+      messageId: result.message.id,
+      status: result.message.status,
+      eventType: event.eventType,
+      templateKey: binding.templateKey,
+      bindingId: binding.id,
+      contactId: null,
+      contactCreated: false,
+      automation: [{ skipped: "duplicate_event" }],
+    };
+  }
+
+  let contact = null;
+  let contactCreated = false;
+  let automation = [];
+  try {
+    const contactResult = await contactService.upsertContact({
+      locationId: event.locationId,
+      fullName: event.recipient.name || event.payload.guestName || event.payload.customerName,
+      email: event.recipient.email,
+      phone: event.recipient.phone || event.payload.guestPhone || event.payload.phone,
+      sourceType: "webhook",
+      sourceRefType: event.sourceResourceType || eventMeta.sourceResourceType || "event",
+      sourceRefId: event.sourceResourceId || event.idempotencyKey,
+      externalType: event.sourceResourceType || eventMeta.sourceResourceType || "event",
+      externalId: event.sourceResourceId || event.idempotencyKey,
+      lifecycle: event.eventType.startsWith("booking.") ? "customer" : "lead",
+      tags: event.eventType.startsWith("booking.") ? ["booking-customer"] : [],
+      customFields: {
+        source: event.sourceSystem || eventMeta.sourceSystem || "aeroSportsAdmin",
+        lastEventType: event.eventType,
+        bookingNumber: event.payload.bookingNumber || null,
+        venueName: event.payload.venueName || null,
+      },
+      sourceSnapshot: event.payload,
+    });
+    contact = contactResult.contact;
+    contactCreated = Boolean(contactResult.created);
+
+    if (contactCreated) {
+      automation.push(await automationService.triggerWorkflowsForEvent({
+        locationId: event.locationId,
+        eventType: "customer.created",
+        contactId: contact.id,
+        source: "notification_event",
+        payload: { eventType: event.eventType },
+      }));
+    }
+    for (const tag of contactResult.tagsAdded || []) {
+      automation.push(await automationService.triggerWorkflowsForEvent({
+        locationId: event.locationId,
+        eventType: "contact.tag_added",
+        contactId: contact.id,
+        tag,
+        source: "notification_event",
+        payload: { eventType: event.eventType },
+      }));
+    }
+    automation.push(await automationService.triggerWorkflowsForEvent({
+      locationId: event.locationId,
+      eventType: event.eventType,
+      contactId: contact.id,
+      email: event.recipient.email,
+      source: "notification_event",
+      eventId: event.idempotencyKey,
+      payload: event.payload,
+    }));
+  } catch (err) {
+    automation = [{ skipped: "automation_or_contact_bridge_failed", reason: err.message }];
+  }
 
   return {
     duplicate: result.duplicate,
@@ -75,6 +149,9 @@ async function ingestEvent(body) {
     eventType: event.eventType,
     templateKey: binding.templateKey,
     bindingId: binding.id,
+    contactId: contact?.id || null,
+    contactCreated,
+    automation: automation.filter(Boolean),
   };
 }
 
