@@ -1,5 +1,7 @@
+require("dotenv").config();
+
 const requiredInProduction = [
-  "DATABASE_URL",
+  "MOVIRA_CRM_DATABASE_URL",
   "JWT_SECRET",
   "INTERNAL_API_SECRET",
   "AWS_REGION",
@@ -17,51 +19,58 @@ function requireProductionEnv() {
 
 requireProductionEnv();
 
-function envValue(...keys) {
-  for (const key of keys) {
-    const value = process.env[key];
-    if (value) return value;
-  }
-  return "";
+function booleanEnv(key, fallback = false) {
+  const raw = process.env[key];
+  if (raw === undefined || raw === "") return fallback;
+  const value = String(raw).toLowerCase();
+  if (["false", "0", "no", "disable"].includes(value)) return false;
+  if (["true", "1", "yes", "require"].includes(value)) return true;
+  return fallback;
 }
 
 const config = {
   env: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 4100),
-  databaseUrl: process.env.DATABASE_URL || null,
+  database: {
+    crm: {
+      url: process.env.MOVIRA_CRM_DATABASE_URL || null,
+      envVar: "MOVIRA_CRM_DATABASE_URL",
+      ssl: booleanEnv("MOVIRA_CRM_DB_SSL", process.env.NODE_ENV === "production"),
+    },
+  },
   redisUrl: process.env.REDIS_URL || null,
   jwtSecret: process.env.JWT_SECRET || "dev-only",
   internalApiSecret: process.env.INTERNAL_API_SECRET || "dev-only",
   urls: {
-    publicBaseUrl: (process.env.CRM_PUBLIC_BASE_URL || process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, ""),
-    trackingBaseUrl: (process.env.CRM_TRACKING_BASE_URL || process.env.CRM_PUBLIC_BASE_URL || process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, ""),
+    publicBaseUrl: (process.env.CRM_PUBLIC_BASE_URL || "").replace(/\/+$/, ""),
+    trackingBaseUrl: (process.env.CRM_TRACKING_BASE_URL || "").replace(/\/+$/, ""),
   },
   integrations: {
-    coreApiBaseUrl: (process.env.MOVIRA_CORE_API_BASE_URL || process.env.CORE_API_BASE_URL || "http://127.0.0.1:5171/api").replace(/\/+$/, ""),
+    coreApiBaseUrl: (process.env.MOVIRA_CORE_API_BASE_URL || "http://127.0.0.1:5171/api").replace(/\/+$/, ""),
   },
   aws: {
     region: process.env.AWS_REGION || "us-east-1",
     queues: {
-      transactionalCritical: envValue("SQS_TRANSACTIONAL_CRITICAL_URL"),
-      transactionalCriticalDlq: envValue("SQS_TRANSACTIONAL_CRITICAL_DLQ_URL"),
-      transactionalDefault: envValue("SQS_TRANSACTIONAL_DEFAULT_URL"),
-      transactionalDefaultDlq: envValue("SQS_TRANSACTIONAL_DEFAULT_DLQ_URL"),
-      marketingBulk: envValue("SQS_MARKETING_BULK_URL"),
-      marketingJourney: envValue("SQS_MARKETING_JOURNEY_URL"),
-      webhookEvents: envValue("SQS_WEBHOOK_EVENTS_URL"),
+      transactionalCritical: process.env.SQS_TRANSACTIONAL_CRITICAL_URL || "",
+      transactionalCriticalDlq: process.env.SQS_TRANSACTIONAL_CRITICAL_DLQ_URL || "",
+      transactionalDefault: process.env.SQS_TRANSACTIONAL_DEFAULT_URL || "",
+      transactionalDefaultDlq: process.env.SQS_TRANSACTIONAL_DEFAULT_DLQ_URL || "",
+      marketingBulk: process.env.SQS_MARKETING_BULK_URL || "",
+      marketingJourney: process.env.SQS_MARKETING_JOURNEY_URL || "",
+      webhookEvents: process.env.SQS_WEBHOOK_EVENTS_URL || "",
     },
     ses: {
-      // SES can live in a different region than SQS (AWS_REGION). Falls back to AWS_REGION.
-      region: envValue("AWS_SES_REGION", "SES_REGION") || process.env.AWS_REGION || "us-east-1",
-      transactionalConfigSet:
-        envValue("SES_TRANSACTIONAL_CONFIG_SET", "AWS_SES_TRANSACTIONAL_CONFIG_SET") || "movira-transactional",
-      marketingConfigSet: envValue("SES_MARKETING_CONFIG_SET", "AWS_SES_MARKETING_CONFIG_SET") || "movira-marketing",
-      defaultFrom: envValue("SES_DEFAULT_FROM", "AWS_SES_DEFAULT_FROM") || "no-reply@movira.app",
+      region: process.env.AWS_SES_REGION || "us-east-1",
+      transactionalConfigSet: process.env.SES_TRANSACTIONAL_CONFIG_SET || "movira-transactional",
+      marketingConfigSet: process.env.SES_MARKETING_CONFIG_SET || "movira-marketing",
+      defaultFrom: process.env.SES_DEFAULT_FROM || "no-reply@movira.app",
     },
     s3: {
       marketingAssetsBucket: process.env.S3_MARKETING_ASSETS_BUCKET || "",
       marketingAssetsPrefix: process.env.S3_MARKETING_ASSETS_PREFIX || "marketing-assets",
       publicBaseUrl: process.env.S3_MARKETING_ASSETS_PUBLIC_BASE_URL || "",
+      contactExportsBucket: process.env.S3_CONTACT_EXPORTS_BUCKET || "",
+      contactExportsPrefix: process.env.S3_CONTACT_EXPORTS_PREFIX || "contact-exports",
     },
   },
   email: {
@@ -70,9 +79,9 @@ const config = {
       host: process.env.SMTP_HOST || "smtp.gmail.com",
       port: Number(process.env.SMTP_PORT || 465),
       secure: String(process.env.SMTP_SECURE || "true").toLowerCase() !== "false",
-      user: process.env.SMTP_USER || process.env.EMAIL_FROM || "",
-      pass: process.env.SMTP_PASS || process.env.EMAIL_PASSWORD || "",
-      from: process.env.EMAIL_FROM || process.env.SMTP_USER || "",
+      user: process.env.SMTP_USER || "",
+      pass: process.env.SMTP_PASS || "",
+      from: process.env.EMAIL_FROM || "",
     },
   },
   marketing: {
@@ -81,6 +90,10 @@ const config = {
       perHour: Number(process.env.MARKETING_SEND_RATE_PER_HOUR || 1000),
     },
   },
+  queueJobs: {
+    pollMs: Number(process.env.CRM_QUEUE_WORKER_POLL_MS || 2000),
+    batchSize: Number(process.env.CRM_QUEUE_WORKER_BATCH_SIZE || 10),
+  },
   // Org-level sender/business identity injected as default {{business.*}} merge
   // data for marketing sends (compliance footer). Per-campaign body.data.business
   // overrides these. business.address is a legal requirement before real sends.
@@ -88,7 +101,7 @@ const config = {
     name: process.env.CRM_BUSINESS_NAME || "",
     address: process.env.CRM_BUSINESS_ADDRESS || "",
     phone: process.env.CRM_BUSINESS_PHONE || "",
-    email: process.env.CRM_BUSINESS_EMAIL || envValue("SES_DEFAULT_FROM", "AWS_SES_DEFAULT_FROM") || "",
+    email: process.env.CRM_BUSINESS_EMAIL || "",
     website: process.env.CRM_BUSINESS_WEBSITE || "",
   },
 };

@@ -96,6 +96,23 @@ test("isAdvancedTree distinguishes the two shapes", () => {
   assert.equal(engine.isAdvancedTree({ lifecycles: ["customer"] }), false);
 });
 
+test("analyze counts nested conditions for live-query guardrails", () => {
+  const stats = engine.analyze({
+    match: "all",
+    conditions: [
+      { field: "email", operator: "contains", value: "gmail" },
+      {
+        match: "any",
+        conditions: [
+          { field: "lifecycle", operator: "is", value: "customer" },
+          { field: "tags", operator: "has_any", value: ["vip"] },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(stats, { conditions: 3, depth: 1 });
+});
+
 test("searchFragment matches name / email / phone", () => {
   const frag = engine.searchFragment("ava");
   assert.ok(symbols(frag).includes(Op.or));

@@ -671,6 +671,26 @@ router.post("/campaigns/:id/queue", async (req, res, next) => {
   }
 });
 
+router.get("/campaign-audience-jobs", async (req, res, next) => {
+  try {
+    const data = await service.listCampaignAudienceJobs(req.query || {});
+    res.json({ success: true, data });
+  } catch (err) {
+    if (err.statusCode) return sendError(res, err);
+    return next(err);
+  }
+});
+
+router.get("/campaign-audience-jobs/:id", async (req, res, next) => {
+  try {
+    const data = await service.getCampaignAudienceJob(req.params.id, req.query || {});
+    res.json({ success: true, data });
+  } catch (err) {
+    if (err.statusCode) return sendError(res, err);
+    return next(err);
+  }
+});
+
 router.post("/campaigns/:id/pause", async (req, res, next) => {
   try {
     const data = await service.pauseCampaign(req.params.id, req.body || {});

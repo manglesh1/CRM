@@ -17,18 +17,24 @@ const defineCrmMarketingSnippet = require("./CrmMarketingSnippet");
 const defineCrmMarketingTemplateRevision = require("./CrmMarketingTemplateRevision");
 const defineCrmMarketingSuppression = require("./CrmMarketingSuppression");
 const defineCrmMarketingWorkerHeartbeat = require("./CrmMarketingWorkerHeartbeat");
+const defineCrmMarketingCampaignAudienceJob = require("./CrmMarketingCampaignAudienceJob");
 const defineCrmAuditLog = require("./CrmAuditLog");
 const defineCrmEventTemplateBinding = require("./CrmEventTemplateBinding");
 const defineCrmContact = require("./CrmContact");
 const defineCrmContactIdentity = require("./CrmContactIdentity");
 const defineCrmContactImportJob = require("./CrmContactImportJob");
+const defineCrmContactBulkActionJob = require("./CrmContactBulkActionJob");
+const defineCrmContactExportJob = require("./CrmContactExportJob");
 const defineCrmContactTag = require("./CrmContactTag");
+const defineCrmContactFilterCount = require("./CrmContactFilterCount");
 const defineCrmContactField = require("./CrmContactField");
 const defineCrmContactNote = require("./CrmContactNote");
 const defineCrmSegment = require("./CrmSegment");
 const defineCrmSegmentMember = require("./CrmSegmentMember");
 const defineCrmAutomationWorkflow = require("./CrmAutomationWorkflow");
 const defineCrmAutomationRun = require("./CrmAutomationRun");
+const defineCrmAutomationEnrollmentJob = require("./CrmAutomationEnrollmentJob");
+const defineCrmQueueJob = require("./CrmQueueJob");
 
 let models = null;
 
@@ -53,18 +59,24 @@ function getModels() {
   const CrmMarketingTemplateRevision = defineCrmMarketingTemplateRevision(sequelize);
   const CrmMarketingSuppression = defineCrmMarketingSuppression(sequelize);
   const CrmMarketingWorkerHeartbeat = defineCrmMarketingWorkerHeartbeat(sequelize);
+  const CrmMarketingCampaignAudienceJob = defineCrmMarketingCampaignAudienceJob(sequelize);
   const CrmAuditLog = defineCrmAuditLog(sequelize);
   const CrmEventTemplateBinding = defineCrmEventTemplateBinding(sequelize);
   const CrmContact = defineCrmContact(sequelize);
   const CrmContactIdentity = defineCrmContactIdentity(sequelize);
   const CrmContactImportJob = defineCrmContactImportJob(sequelize);
+  const CrmContactBulkActionJob = defineCrmContactBulkActionJob(sequelize);
+  const CrmContactExportJob = defineCrmContactExportJob(sequelize);
   const CrmContactTag = defineCrmContactTag(sequelize);
+  const CrmContactFilterCount = defineCrmContactFilterCount(sequelize);
   const CrmContactField = defineCrmContactField(sequelize);
   const CrmContactNote = defineCrmContactNote(sequelize);
   const CrmSegment = defineCrmSegment(sequelize);
   const CrmSegmentMember = defineCrmSegmentMember(sequelize);
   const CrmAutomationWorkflow = defineCrmAutomationWorkflow(sequelize);
   const CrmAutomationRun = defineCrmAutomationRun(sequelize);
+  const CrmAutomationEnrollmentJob = defineCrmAutomationEnrollmentJob(sequelize);
+  const CrmQueueJob = defineCrmQueueJob(sequelize);
 
   CrmMarketingFolder.hasMany(CrmMarketingTemplate, { foreignKey: "folderId", as: "templates" });
   CrmMarketingTemplate.belongsTo(CrmMarketingFolder, { foreignKey: "folderId", as: "folder" });
@@ -82,6 +94,9 @@ function getModels() {
   CrmMarketingSuppression.belongsTo(CrmMarketingMessage, { foreignKey: "messageId", as: "message" });
   CrmMarketingCampaign.hasMany(CrmMarketingSuppression, { foreignKey: "campaignId", as: "suppressions" });
   CrmMarketingSuppression.belongsTo(CrmMarketingCampaign, { foreignKey: "campaignId", as: "campaign" });
+  CrmMarketingCampaign.hasMany(CrmMarketingCampaignAudienceJob, { foreignKey: "campaignId", as: "audienceJobs" });
+  CrmMarketingCampaignAudienceJob.belongsTo(CrmMarketingCampaign, { foreignKey: "campaignId", as: "campaign" });
+  CrmMarketingCampaignAudienceJob.belongsTo(CrmMarketingTemplate, { foreignKey: "templateId", as: "template" });
   CrmMarketingFolder.hasMany(CrmMarketingAsset, { foreignKey: "folderId", as: "assets" });
   CrmMarketingAsset.belongsTo(CrmMarketingFolder, { foreignKey: "folderId", as: "folder" });
   CrmContact.hasMany(CrmContactIdentity, { foreignKey: "contactId", as: "identities" });
@@ -94,6 +109,8 @@ function getModels() {
   CrmSegmentMember.belongsTo(CrmContact, { foreignKey: "contactId", as: "contact" });
   CrmAutomationWorkflow.hasMany(CrmAutomationRun, { foreignKey: "workflowId", as: "runs" });
   CrmAutomationRun.belongsTo(CrmAutomationWorkflow, { foreignKey: "workflowId", as: "workflow" });
+  CrmAutomationWorkflow.hasMany(CrmAutomationEnrollmentJob, { foreignKey: "workflowId", as: "enrollmentJobs" });
+  CrmAutomationEnrollmentJob.belongsTo(CrmAutomationWorkflow, { foreignKey: "workflowId", as: "workflow" });
   CrmContact.hasMany(CrmAutomationRun, { foreignKey: "contactId", as: "automationRuns" });
   CrmAutomationRun.belongsTo(CrmContact, { foreignKey: "contactId", as: "contact" });
 
@@ -137,18 +154,24 @@ function getModels() {
     CrmMarketingTemplateRevision,
     CrmMarketingSuppression,
     CrmMarketingWorkerHeartbeat,
+    CrmMarketingCampaignAudienceJob,
     CrmAuditLog,
     CrmEventTemplateBinding,
     CrmContact,
     CrmContactIdentity,
     CrmContactImportJob,
+    CrmContactBulkActionJob,
+    CrmContactExportJob,
     CrmContactTag,
+    CrmContactFilterCount,
     CrmContactField,
     CrmContactNote,
     CrmSegment,
     CrmSegmentMember,
     CrmAutomationWorkflow,
     CrmAutomationRun,
+    CrmAutomationEnrollmentJob,
+    CrmQueueJob,
   };
   return models;
 }

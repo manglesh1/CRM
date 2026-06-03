@@ -2,7 +2,7 @@ const express = require("express");
 const auth = require("../../shared/auth");
 const service = require("./service");
 const auditService = require("../audit/service");
-const automationService = require("../automation/service");
+const queueJobs = require("../queueJobs/service");
 
 const router = express.Router();
 router.use(auth);
@@ -27,25 +27,17 @@ async function safeAudit(req, input = {}) {
   }
 }
 
-async function triggerSegmentJoinAutomations(req, segment, source) {
-  const entered = Array.isArray(segment?.enteredContactIds) ? segment.enteredContactIds : [];
-  const results = [];
-  for (const contactId of entered) {
-    try {
-      const result = await automationService.triggerWorkflowsForEvent({
-        locationId: segment.locationId || req.body?.locationId || req.query?.locationId,
-        eventType: "segment.joined",
-        contactId,
-        segmentId: segment.id,
-        source,
-        payload: { segmentName: segment.name },
-      });
-      results.push(result);
-    } catch (err) {
-      req.log?.warn?.({ err, segmentId: segment?.id, contactId }, "segment automation trigger skipped");
-    }
+async function queueSegmentRefresh(req, segment, source) {
+  try {
+    return await queueJobs.enqueueSegmentRefresh(
+      segment.id,
+      segment.locationId || req.body?.locationId || req.query?.locationId,
+      { source }
+    );
+  } catch (err) {
+    req.log?.warn?.({ err, segmentId: segment?.id }, "segment refresh enqueue skipped");
+    return { queued: 0, jobIds: [] };
   }
-  return results;
 }
 
 router.get("/", async (req, res, next) => {
@@ -88,8 +80,8 @@ router.post("/", async (req, res, next) => {
       entityName: data.name,
       metadata: { segmentType: data.segmentType, memberCount: data.memberCount || 0 },
     });
-    data.automation = await triggerSegmentJoinAutomations(req, data, "segment_created");
-    res.status(201).json({ success: true, data });
+    data.segmentRefresh = await queueSegmentRefresh(req, data, "segment_created");
+    res.status(202).json({ success: true, data });
   } catch (err) {
     if (err.statusCode) return sendError(res, err);
     return next(err);
@@ -116,7 +108,9 @@ router.patch("/:id", async (req, res, next) => {
       entityName: data.name,
       metadata: { fields: Object.keys(req.body || {}).filter((key) => key !== "locationId"), memberCount: data.memberCount || 0 },
     });
-    data.automation = await triggerSegmentJoinAutomations(req, data, "segment_updated");
+    if (data.refreshQueued) {
+      data.segmentRefresh = await queueSegmentRefresh(req, data, "segment_updated");
+    }
     res.json({ success: true, data });
   } catch (err) {
     if (err.statusCode) return sendError(res, err);
@@ -143,16 +137,16 @@ router.delete("/:id", async (req, res, next) => {
 
 router.post("/:id/refresh", async (req, res, next) => {
   try {
-    const data = await service.refreshSegment(req.params.id, { ...req.query, ...req.body });
+    const data = await service.getSegment(req.params.id, { ...req.query, ...req.body });
     await safeAudit(req, {
-      action: "segment_refreshed",
+      action: "segment_refresh_queued",
       entityType: "crm_segment",
       entityId: data.id,
       entityName: data.name,
       metadata: { memberCount: data.memberCount || 0, lastCalculatedAt: data.lastCalculatedAt },
     });
-    data.automation = await triggerSegmentJoinAutomations(req, data, "segment_refreshed");
-    res.json({ success: true, data });
+    data.segmentRefresh = await queueSegmentRefresh(req, data, "segment_manual_refresh");
+    res.status(202).json({ success: true, data });
   } catch (err) {
     if (err.statusCode) return sendError(res, err);
     return next(err);

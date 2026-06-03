@@ -11,6 +11,28 @@ Movira CRM is the **communications service** for Movira. It owns:
 
 Transactional and marketing live as **separate tables** but share **one builder UI** (in `my-admin-app`).
 
+## Database boundary
+
+`movira-crm` must use its own Postgres database, separate from the booking/core database.
+
+Recommended production layout:
+
+```
+movira-core-db  -> bookings, payments, schedules, waivers, POS, staff
+movira-crm-db   -> contacts, segments, email, automations, audit logs
+```
+
+Use `MOVIRA_CRM_DATABASE_URL` for this service. Do not use generic `DATABASE_URL`, `DB_NAME`, or `DB_HOST` keys here; those names can collide with the booking/core app and accidentally point CRM migrations at the wrong database.
+
+CRM queue work is stored in `crm_queue_jobs` with separate queues:
+
+- `contacts` -> CSV/contact import jobs, async advanced-filter count jobs, large bulk contact actions, and queued CSV exports
+- `segments` -> dynamic segment recalculation jobs
+- `automation` -> workflow trigger execution jobs
+
+Run each worker independently so high import load does not block segment refreshes or automation execution.
+Advanced-filter exact totals are cached in `crm_contact_filter_counts`; the customers grid previews the first page immediately and the contacts worker calculates the exact matching count asynchronously. Large bulk actions are tracked in `crm_contact_bulk_action_jobs` and executed by the contacts worker in batches. Large exports are tracked in `crm_contact_export_jobs`; configure `S3_CONTACT_EXPORTS_BUCKET` for private S3 storage, otherwise files are written to `CRM_CONTACT_EXPORT_DIR` or the OS temp directory locally.
+
 ## Architecture in 1 minute
 
 ```
@@ -56,6 +78,9 @@ npm run migrate     # also runs seeders
 npm run dev         # starts API on PORT from .env (default 4100)
 npm run worker:transactional  # in a second terminal
 npm run worker:marketing      # in a third terminal
+npm run worker:contacts       # CRM contact import jobs
+npm run worker:segments       # CRM segment recalculation jobs
+npm run worker:automation     # CRM automation trigger jobs
 ```
 
 `predev` script runs `migrate && seed` automatically when you `npm run dev`.
@@ -64,12 +89,22 @@ npm run worker:marketing      # in a third terminal
 
 | Var | Required | Purpose |
 |---|---|---|
-| `DATABASE_URL` | yes | Postgres connection string |
+| `MOVIRA_CRM_DATABASE_URL` | prod | Dedicated Movira CRM Postgres connection string |
+| `MOVIRA_CRM_DB_SSL` | prod | Enables/disables SSL for the CRM database connection |
+| `MOVIRA_CRM_DB_USERNAME` | dev only | CRM DB username when no URL is provided |
+| `MOVIRA_CRM_DB_PASSWORD` | dev only | CRM DB password when no URL is provided |
+| `MOVIRA_CRM_DB_NAME` | dev only | CRM DB name when no URL is provided |
+| `MOVIRA_CRM_DB_HOST` | dev only | CRM DB host when no URL is provided |
+| `MOVIRA_CRM_DB_PORT` | dev only | CRM DB port when no URL is provided |
 | `PORT` | no | API port (default 4100) |
 | `AWS_REGION` | no | AWS region for SQS/SES (default us-east-1) |
 | `AWS_*` SQS URLs | prod | Transactional + marketing queue URLs |
-| `AWS_SES_DEFAULT_FROM` | prod | Default from address |
-| `AWS_SES_*_CONFIG_SET` | prod | SES configuration sets |
+| `SES_DEFAULT_FROM` | prod | Default from address |
+| `SES_TRANSACTIONAL_CONFIG_SET` | prod | SES transactional configuration set |
+| `SES_MARKETING_CONFIG_SET` | prod | SES marketing configuration set |
+| `AWS_SES_REGION` | prod | SES region |
+| `CRM_QUEUE_WORKER_POLL_MS` | no | DB-backed CRM queue worker poll interval |
+| `CRM_QUEUE_WORKER_BATCH_SIZE` | no | Jobs claimed per CRM queue worker poll |
 
 Without SQS URLs, message rows are created with status `enqueue_skipped` — handy for local dev.
 

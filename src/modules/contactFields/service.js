@@ -38,6 +38,24 @@ function plain(row) {
   return row?.get ? row.get({ plain: true }) : row;
 }
 
+async function markContactFilterCountsStale(locationId, reason = "contact_fields_changed") {
+  const models = getModels();
+  await models.CrmContactFilterCount.update(
+    {
+      status: "stale",
+      calculatedAt: null,
+      invalidatedAt: new Date(),
+      lastError: reason,
+    },
+    {
+      where: {
+        locationId,
+        status: { [Op.in]: ["completed", "failed", "pending", "processing"] },
+      },
+    }
+  );
+}
+
 function slugify(value) {
   return String(value || "")
     .toLowerCase()
@@ -125,6 +143,7 @@ async function createField(input = {}) {
       sortOrder: Number.isInteger(Number(input.sortOrder)) ? Number(input.sortOrder) : 0,
       archivedAt: null,
     });
+    await markContactFilterCountsStale(locationId, "contact_field_restored");
     return plain(revived);
   }
 
@@ -137,6 +156,7 @@ async function createField(input = {}) {
     showInTable: Boolean(input.showInTable),
     sortOrder: Number.isInteger(Number(input.sortOrder)) ? Number(input.sortOrder) : 0,
   });
+  await markContactFilterCountsStale(locationId, "contact_field_created");
   return plain(field);
 }
 
@@ -167,6 +187,7 @@ async function updateField(id, input = {}) {
   if (input.sortOrder !== undefined && Number.isInteger(Number(input.sortOrder))) patch.sortOrder = Number(input.sortOrder);
 
   const updated = await field.update(patch);
+  await markContactFilterCountsStale(locationId, "contact_field_updated");
   return plain(updated);
 }
 
@@ -192,6 +213,7 @@ async function deleteField(id, query = {}) {
   if (!field) throw notFound("Field");
   const data = plain(field);
   await field.destroy();
+  await markContactFilterCountsStale(locationId, "contact_field_deleted");
   return data;
 }
 

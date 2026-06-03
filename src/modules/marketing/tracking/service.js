@@ -1,7 +1,7 @@
 const { getModels } = require("../../../db/models");
 const suppressionService = require("../email/suppressionService");
 const messageDispatcher = require("../email/messageDispatcher");
-const automationService = require("../../automation/service");
+const queueJobs = require("../../queueJobs/service");
 
 const EVENT_TO_STATUS = {
   queued: { status: "queued", field: "queuedAt" },
@@ -85,7 +85,7 @@ async function recordMarketingEvent(messageId, eventType, payload = {}) {
 
   if (isFirstOccurrence && ["open", "click"].includes(eventType)) {
     try {
-      await automationService.triggerWorkflowsForEvent({
+      await queueJobs.enqueueAutomationEvents([{
         locationId: message.locationId,
         eventType: eventType === "open" ? "email.opened" : "email.clicked",
         email: message.recipient,
@@ -97,7 +97,7 @@ async function recordMarketingEvent(messageId, eventType, payload = {}) {
           subject: message.subject,
           destinationUrl: payload.destinationUrl || null,
         },
-      });
+      }], { locationId: message.locationId, source: "marketing_tracking" });
     } catch (_err) {
       // Tracking must not fail if automation has no matching contact/workflow.
     }

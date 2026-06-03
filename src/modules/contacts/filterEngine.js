@@ -286,6 +286,28 @@ function isAdvancedTree(filters) {
   return Boolean(filters && typeof filters === "object" && Array.isArray(filters.conditions));
 }
 
+function analyzeGroup(group, depth = 0) {
+  if (!group || typeof group !== "object") return { conditions: 0, depth };
+  const entries = Array.isArray(group.conditions) ? group.conditions : [];
+  return entries.reduce(
+    (acc, entry) => {
+      if (Array.isArray(entry?.conditions)) {
+        const nested = analyzeGroup(entry, depth + 1);
+        return {
+          conditions: acc.conditions + nested.conditions,
+          depth: Math.max(acc.depth, nested.depth),
+        };
+      }
+      return { conditions: acc.conditions + 1, depth: acc.depth };
+    },
+    { conditions: 0, depth }
+  );
+}
+
+function analyze(filters) {
+  return analyzeGroup(normalize(filters), 0);
+}
+
 // Compile a filter (tree or legacy) to a Sequelize where fragment.
 // Returns {} when there is nothing to constrain.
 function compile(filters, { customFields = [] } = {}) {
@@ -316,6 +338,7 @@ module.exports = {
   buildFieldMap,
   searchFragment,
   normalize,
+  analyze,
   convertLegacy,
   isAdvancedTree,
 };

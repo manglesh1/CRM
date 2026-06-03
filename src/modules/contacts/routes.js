@@ -3,7 +3,7 @@ const auth = require("../../shared/auth");
 const service = require("./service");
 const record = require("./recordService");
 const auditService = require("../audit/service");
-const automationService = require("../automation/service");
+const queueJobs = require("../queueJobs/service");
 
 const router = express.Router();
 router.use(auth);
@@ -28,16 +28,19 @@ async function safeAudit(req, input = {}) {
   }
 }
 
-async function safeAutomation(req, event = {}) {
+async function queueAutomation(req, event = {}) {
   try {
     if (!event.eventType) return null;
-    return await automationService.triggerWorkflowsForEvent({
+    return await queueJobs.enqueueAutomationEvents([{
       ...event,
+      locationId: event.locationId || req.body?.locationId || req.query?.locationId,
+      source: event.source || "contacts",
+    }], {
       locationId: event.locationId || req.body?.locationId || req.query?.locationId,
       source: event.source || "contacts",
     });
   } catch (err) {
-    req.log?.warn?.({ err, automationEvent: event }, "contacts automation trigger skipped");
+    req.log?.warn?.({ err, automationEvent: event }, "contacts automation enqueue skipped");
     return null;
   }
 }
@@ -45,9 +48,21 @@ async function safeAutomation(req, event = {}) {
 async function triggerContactAutomationEvents(req, events = []) {
   const results = [];
   for (const event of events.filter(Boolean)) {
-    results.push(await safeAutomation(req, event));
+    results.push(await queueAutomation(req, event));
   }
   return results.filter(Boolean);
+}
+
+async function queueSegmentRefresh(req, locationId, payload = {}) {
+  try {
+    return await queueJobs.enqueueSegmentRefreshForLocation(locationId || req.body?.locationId || req.query?.locationId, {
+      source: payload.source || "contacts",
+      ...payload,
+    });
+  } catch (err) {
+    req.log?.warn?.({ err, locationId }, "segment refresh enqueue skipped");
+    return null;
+  }
 }
 
 router.get("/", async (req, res, next) => {
@@ -105,8 +120,9 @@ router.patch("/tags/:tagName", async (req, res, next) => {
       entityType: "crm_contact_tag",
       entityId: data.tag?.normalizedName || req.params.tagName,
       entityName: data.tag?.name || req.params.tagName,
-      metadata: { previousName: req.params.tagName, affectedContacts: data.affected || 0, refreshedSegments: data.refreshedSegments || 0 },
+      metadata: { previousName: req.params.tagName, affectedContacts: data.affected || 0, segmentsQueuedForRefresh: data.segmentsQueuedForRefresh || 0 },
     });
+    data.segmentRefresh = await queueSegmentRefresh(req, data.tag?.locationId || req.body.locationId || req.query.locationId, { source: "tag_updated" });
     res.json({ success: true, data });
   } catch (err) {
     if (err.statusCode) return sendError(res, err);
@@ -122,8 +138,9 @@ router.delete("/tags/:tagName", async (req, res, next) => {
       entityType: "crm_contact_tag",
       entityId: req.params.tagName,
       entityName: data.name || req.params.tagName,
-      metadata: { affectedContacts: data.affected || 0, refreshedSegments: data.refreshedSegments || 0 },
+      metadata: { affectedContacts: data.affected || 0, segmentsQueuedForRefresh: data.segmentsQueuedForRefresh || 0 },
     });
+    data.segmentRefresh = await queueSegmentRefresh(req, req.query.locationId || req.body?.locationId, { source: "tag_deleted" });
     res.json({ success: true, data });
   } catch (err) {
     if (err.statusCode) return sendError(res, err);
@@ -134,7 +151,41 @@ router.delete("/tags/:tagName", async (req, res, next) => {
 router.post("/export", async (req, res, next) => {
   try {
     const data = await service.exportContacts({ ...req.body, locationId: req.body.locationId || req.query.locationId });
+    res.status(data.queued ? 202 : 200).json({ success: true, data });
+  } catch (err) {
+    if (err.statusCode) return sendError(res, err);
+    return next(err);
+  }
+});
+
+router.get("/export-jobs", async (req, res, next) => {
+  try {
+    const data = await service.listContactExportJobs(req.query || {});
     res.json({ success: true, data });
+  } catch (err) {
+    if (err.statusCode) return sendError(res, err);
+    return next(err);
+  }
+});
+
+router.get("/export-jobs/:id", async (req, res, next) => {
+  try {
+    const data = await service.getContactExportJob(req.params.id, req.query || {});
+    res.json({ success: true, data });
+  } catch (err) {
+    if (err.statusCode) return sendError(res, err);
+    return next(err);
+  }
+});
+
+router.get("/export-jobs/:id/download", async (req, res, next) => {
+  try {
+    const data = await service.getContactExportFile(req.params.id, req.query || {});
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${String(data.fileName || "customers.csv").replace(/"/g, "")}"`);
+    if (data.contentLength) res.setHeader("Content-Length", String(data.contentLength));
+    data.stream.on("error", next);
+    data.stream.pipe(res);
   } catch (err) {
     if (err.statusCode) return sendError(res, err);
     return next(err);
@@ -164,6 +215,26 @@ router.post("/merge", async (req, res, next) => {
 router.get("/import-jobs", async (req, res, next) => {
   try {
     const data = await service.listImportJobs(req.query || {});
+    res.json({ success: true, data });
+  } catch (err) {
+    if (err.statusCode) return sendError(res, err);
+    return next(err);
+  }
+});
+
+router.get("/bulk-action-jobs", async (req, res, next) => {
+  try {
+    const data = await service.listContactBulkActionJobs(req.query || {});
+    res.json({ success: true, data });
+  } catch (err) {
+    if (err.statusCode) return sendError(res, err);
+    return next(err);
+  }
+});
+
+router.get("/bulk-action-jobs/:id", async (req, res, next) => {
+  try {
+    const data = await service.getContactBulkActionJob(req.params.id, req.query || {});
     res.json({ success: true, data });
   } catch (err) {
     if (err.statusCode) return sendError(res, err);
@@ -206,6 +277,7 @@ router.post("/", async (req, res, next) => {
       })),
     ]);
     data.automation = automation;
+    data.segmentRefresh = await queueSegmentRefresh(req, req.body.locationId || req.query.locationId, { source: data.created ? "contact_created" : "contact_upserted" });
     res.status(data.created ? 201 : 200).json({ success: true, data });
   } catch (err) {
     if (err.statusCode) return sendError(res, err);
@@ -216,6 +288,26 @@ router.post("/", async (req, res, next) => {
 router.post("/search", async (req, res, next) => {
   try {
     const data = await service.searchContacts({ ...req.body, locationId: req.body.locationId || req.query.locationId });
+    res.json({ success: true, data });
+  } catch (err) {
+    if (err.statusCode) return sendError(res, err);
+    return next(err);
+  }
+});
+
+router.post("/filter-counts", async (req, res, next) => {
+  try {
+    const data = await service.scheduleContactFilterCount({ ...req.body, locationId: req.body.locationId || req.query.locationId });
+    res.status(data.queued ? 202 : 200).json({ success: true, data });
+  } catch (err) {
+    if (err.statusCode) return sendError(res, err);
+    return next(err);
+  }
+});
+
+router.get("/filter-counts/:scopeHash", async (req, res, next) => {
+  try {
+    const data = await service.getContactFilterCount({ ...req.query, scopeHash: req.params.scopeHash });
     res.json({ success: true, data });
   } catch (err) {
     if (err.statusCode) return sendError(res, err);
@@ -234,12 +326,18 @@ router.post("/bulk", async (req, res, next) => {
       entityName: action.replace(/_/g, " "),
       metadata: {
         affected: data.affected || 0,
+        queued: Boolean(data.queued),
+        bulkActionJobId: data.bulkActionJob?.id || null,
         tags: req.body?.tags || [],
         selectedIds: Array.isArray(req.body?.ids) ? req.body.ids.length : 0,
         allowAll: Boolean(req.body?.allowAll),
-        refreshedSegments: data.refreshedSegments || 0,
+        segmentsQueuedForRefresh: data.segmentsQueuedForRefresh || 0,
       },
     });
+    if (data.queued) return res.status(202).json({ success: true, data });
+    if (data.segmentsQueuedForRefresh) {
+      data.segmentRefresh = await queueSegmentRefresh(req, req.body.locationId || req.query.locationId, { source: `contacts_${action}` });
+    }
     if (action === "add_tags") {
       data.automation = await triggerContactAutomationEvents(req, (data.tagsAdded || []).map((item) => ({
         eventType: "contact.tag_added",
@@ -266,7 +364,7 @@ router.post("/import", async (req, res, next) => {
   try {
     const data = await service.importContacts({ ...req.body, locationId: req.body.locationId || req.query.locationId });
     await safeAudit(req, {
-      action: "contacts_imported",
+      action: "contacts_import_queued",
       entityType: "crm_import_job",
       entityId: data.job?.id,
       entityName: data.job?.fileName || req.body?.fileName || "CSV import",
@@ -279,8 +377,7 @@ router.post("/import", async (req, res, next) => {
         errorCount: data.job?.errorCount || 0,
       },
     });
-    data.automation = await triggerContactAutomationEvents(req, data.automationEvents || []);
-    res.status(201).json({ success: true, data });
+    res.status(202).json({ success: true, data });
   } catch (err) {
     if (err.statusCode) return sendError(res, err);
     return next(err);
@@ -305,9 +402,10 @@ router.post("/sync/movira", async (req, res, next) => {
         updatedCount: data.job?.updatedCount || 0,
         skippedCount: data.job?.skippedCount || 0,
         errorCount: data.job?.errorCount || 0,
-        refreshedSegments: data.refreshedSegments || 0,
+        segmentsQueuedForRefresh: data.segmentsQueuedForRefresh || 0,
       },
     });
+    data.segmentRefresh = await queueSegmentRefresh(req, req.body.locationId || req.query.locationId, { source: "movira_sync" });
     data.automation = await triggerContactAutomationEvents(req, data.automationEvents || []);
     res.status(201).json({ success: true, data });
   } catch (err) {
@@ -354,6 +452,7 @@ router.patch("/:id", async (req, res, next) => {
         payload: { doNotContact: Boolean(data.doNotContact) },
       },
     ]);
+    data.segmentRefresh = await queueSegmentRefresh(req, req.body.locationId || req.query.locationId, { source: "contact_updated" });
     res.json({ success: true, data });
   } catch (err) {
     if (err.statusCode) return sendError(res, err);

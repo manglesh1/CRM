@@ -5,19 +5,18 @@ const logger = require("../shared/logger");
 let sequelize = null;
 
 function shouldUseSsl() {
-  const value = String(process.env.DB_SSL || "").toLowerCase();
-  if (["false", "0", "no", "disable"].includes(value)) return false;
-  if (["true", "1", "yes", "require"].includes(value)) return true;
-  return config.env === "production";
+  return config.database.crm.ssl;
 }
 
 function getSequelize() {
   if (sequelize) return sequelize;
-  if (!config.databaseUrl) {
-    throw new Error("DATABASE_URL is required for database access");
+  const crmDatabase = config.database.crm;
+  if (!crmDatabase.url) {
+    throw new Error("MOVIRA_CRM_DATABASE_URL is required for CRM database access");
   }
 
-  sequelize = new Sequelize(config.databaseUrl, {
+  logger.info({ databaseEnvVar: crmDatabase.envVar }, "connecting to Movira CRM database");
+  sequelize = new Sequelize(crmDatabase.url, {
     dialect: "postgres",
     logging: (msg) => logger.debug({ sql: msg }, "sequelize"),
     dialectOptions: shouldUseSsl()

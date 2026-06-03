@@ -5,7 +5,7 @@ const { validateIngestEvent, validateBindingInput } = require("./validation");
 const transactionalService = require("../transactional/service");
 const auditService = require("../audit/service");
 const contactService = require("../contacts/service");
-const automationService = require("../automation/service");
+const queueJobs = require("../queueJobs/service");
 
 async function safeAudit(input) {
   try {
@@ -110,26 +110,27 @@ async function ingestEvent(body) {
     contact = contactResult.contact;
     contactCreated = Boolean(contactResult.created);
 
+    const automationEvents = [];
     if (contactCreated) {
-      automation.push(await automationService.triggerWorkflowsForEvent({
+      automationEvents.push({
         locationId: event.locationId,
         eventType: "customer.created",
         contactId: contact.id,
         source: "notification_event",
         payload: { eventType: event.eventType },
-      }));
+      });
     }
     for (const tag of contactResult.tagsAdded || []) {
-      automation.push(await automationService.triggerWorkflowsForEvent({
+      automationEvents.push({
         locationId: event.locationId,
         eventType: "contact.tag_added",
         contactId: contact.id,
         tag,
         source: "notification_event",
         payload: { eventType: event.eventType },
-      }));
+      });
     }
-    automation.push(await automationService.triggerWorkflowsForEvent({
+    automationEvents.push({
       locationId: event.locationId,
       eventType: event.eventType,
       contactId: contact.id,
@@ -137,6 +138,10 @@ async function ingestEvent(body) {
       source: "notification_event",
       eventId: event.idempotencyKey,
       payload: event.payload,
+    });
+    automation.push(await queueJobs.enqueueAutomationEvents(automationEvents, {
+      locationId: event.locationId,
+      source: "notification_event",
     }));
   } catch (err) {
     automation = [{ skipped: "automation_or_contact_bridge_failed", reason: err.message }];

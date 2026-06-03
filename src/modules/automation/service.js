@@ -2,6 +2,7 @@ const { Op } = require("sequelize");
 const { getModels } = require("../../db/models");
 const engine = require("./engine");
 const filterEngine = require("../contacts/filterEngine");
+const queueJobs = require("../queueJobs/service");
 
 function badRequest(message, errors = []) {
   const err = new Error(message);
@@ -30,6 +31,30 @@ function cleanString(value, max = 240) {
 
 function plain(row) {
   return row?.get ? row.get({ plain: true }) : row;
+}
+
+function serializeEnrollmentJob(row) {
+  const data = plain(row);
+  return {
+    id: data.id,
+    locationId: data.locationId,
+    workflowId: data.workflowId,
+    selection: data.selection || {},
+    source: data.source,
+    status: data.status,
+    totalTargeted: data.totalTargeted,
+    enrolledCount: data.enrolledCount || 0,
+    succeededCount: data.succeededCount || 0,
+    stoppedCount: data.stoppedCount || 0,
+    failedCount: data.failedCount || 0,
+    lastContactId: data.lastContactId || null,
+    errors: data.errors || [],
+    startedAt: data.startedAt,
+    completedAt: data.completedAt,
+    lastError: data.lastError,
+    createdAt: data.createdAt,
+    updatedAt: data.updatedAt,
+  };
 }
 
 async function resolveEventContact(models, locationId, event = {}) {
@@ -305,6 +330,52 @@ async function resolveEnrollContacts(models, locationId, input) {
   return models.CrmContact.findAll({ where, include, limit: 2000 });
 }
 
+async function buildEnrollmentScope(models, locationId, selection = {}) {
+  if (selection.contactId) return { where: { locationId, id: selection.contactId }, include: [] };
+  const and = [];
+  const ids = Array.isArray(selection.ids) ? selection.ids.filter(Boolean) : [];
+  if (ids.length) and.push({ id: { [Op.in]: ids } });
+  if (selection.filters) {
+    const customFields = await loadCustomFields(models, locationId);
+    const fragment = filterEngine.compile(selection.filters, { customFields });
+    if (Object.keys(fragment).length) and.push(fragment);
+  }
+  const searchFragment = filterEngine.searchFragment(selection.search);
+  if (searchFragment) and.push(searchFragment);
+  const include = selection.segmentId
+    ? [{ model: models.CrmSegmentMember, as: "segmentMemberships", where: { segmentId: selection.segmentId, status: "active" }, attributes: [], required: true }]
+    : [];
+  if (!and.length && !include.length && !selection.allowAll) throw badRequest("Choose contacts, a segment, filters, search, or allowAll before enrolling");
+  return { where: and.length ? { locationId, [Op.and]: and } : { locationId }, include };
+}
+
+async function createAutomationEnrollmentJob(workflow, input = {}) {
+  const models = getModels();
+  const locationId = requireLocation(input.locationId);
+  const selection = {
+    contactId: input.contactId || null,
+    ids: Array.isArray(input.ids) ? input.ids.filter(Boolean) : [],
+    segmentId: input.segmentId || null,
+    filters: input.filters || null,
+    search: input.search || "",
+    allowAll: input.allowAll === true,
+  };
+  const job = await models.CrmAutomationEnrollmentJob.create({
+    locationId,
+    workflowId: workflow.id,
+    selection,
+    source: cleanString(input.source, 80) || "manual_enroll",
+    status: "queued",
+  });
+  const queueJob = await queueJobs.enqueueJob({
+    jobType: queueJobs.JOB_TYPES.AUTOMATION_ENROLLMENT,
+    locationId,
+    priority: 50,
+    payload: { enrollmentJobId: job.id },
+  });
+  return { queued: true, workflowId: workflow.id, enrollmentJob: serializeEnrollmentJob(job), queueJob };
+}
+
 // Manually enroll contacts/segment into a workflow and execute it for each.
 async function enrollWorkflow(id, input = {}) {
   const models = getModels();
@@ -314,6 +385,12 @@ async function enrollWorkflow(id, input = {}) {
   const data = plain(workflow);
   const nodes = Array.isArray(data.nodes) ? data.nodes : [];
   if (!nodes.some((n) => n.type !== "trigger")) throw badRequest("Add at least one action before enrolling");
+
+  const hasSelection = Boolean(input.contactId || input.segmentId || input.filters || input.search || input.allowAll || (Array.isArray(input.ids) && input.ids.length));
+  if (!hasSelection) throw badRequest("Choose contacts, a segment, filters, search, or allowAll before enrolling");
+  if (input.queue === true || input.segmentId || input.filters || input.search || input.allowAll || (Array.isArray(input.ids) && input.ids.length > 100)) {
+    return createAutomationEnrollmentJob(workflow, input);
+  }
 
   const contacts = await resolveEnrollContacts(models, locationId, input);
   const summary = { workflowId: id, enrolled: 0, succeeded: 0, stopped: 0, failed: 0 };
@@ -329,6 +406,71 @@ async function enrollWorkflow(id, input = {}) {
 
   await updateWorkflowRunStats(workflow, summary);
   return summary;
+}
+
+async function processAutomationEnrollmentJob(enrollmentJobId) {
+  const models = getModels();
+  const job = await models.CrmAutomationEnrollmentJob.findByPk(enrollmentJobId);
+  if (!job) throw notFound("Automation enrollment job");
+  const workflow = await models.CrmAutomationWorkflow.findOne({ where: { id: job.workflowId, locationId: job.locationId } });
+  if (!workflow) throw notFound("Automation workflow");
+  const batchSize = 250;
+
+  try {
+    if (!job.startedAt) await job.update({ status: "processing", startedAt: new Date(), lastError: null });
+    else await job.update({ status: "processing", lastError: null });
+    const { where, include } = await buildEnrollmentScope(models, job.locationId, job.selection || {});
+    if (job.totalTargeted === null || job.totalTargeted === undefined) {
+      const totalTargeted = await models.CrmContact.count({ where, include, distinct: include.length > 0 });
+      await job.update({ totalTargeted });
+    }
+    const pageWhere = job.lastContactId ? { [Op.and]: [where, { id: { [Op.gt]: job.lastContactId } }] } : where;
+    const contacts = await models.CrmContact.findAll({ where: pageWhere, include, order: [["id", "ASC"]], limit: batchSize });
+    if (!contacts.length) {
+      const updated = await job.update({ status: Number(job.failedCount || 0) ? "completed_with_errors" : "completed", completedAt: new Date() });
+      return serializeEnrollmentJob(updated);
+    }
+
+    const summary = { enrolled: 0, succeeded: 0, stopped: 0, failed: 0 };
+    const errors = Array.isArray(job.errors) ? [...job.errors] : [];
+    for (const contact of contacts) {
+      try {
+        const { result } = await executeWorkflowForContact(models, workflow, contact, { source: job.source || "manual_enroll", enrollmentJobId: job.id });
+        summary.enrolled += 1;
+        if (result.status === "success") summary.succeeded += 1;
+        else if (result.status === "stopped") summary.stopped += 1;
+        else summary.failed += 1;
+      } catch (err) {
+        summary.failed += 1;
+        if (errors.length < 25) errors.push({ contactId: contact.id, message: err.message || String(err) });
+      }
+    }
+
+    await updateWorkflowRunStats(workflow, summary);
+    const hasMore = contacts.length === batchSize;
+    const updated = await job.update({
+      status: hasMore ? "queued" : (Number(job.failedCount || 0) + summary.failed ? "completed_with_errors" : "completed"),
+      enrolledCount: Number(job.enrolledCount || 0) + summary.enrolled,
+      succeededCount: Number(job.succeededCount || 0) + summary.succeeded,
+      stoppedCount: Number(job.stoppedCount || 0) + summary.stopped,
+      failedCount: Number(job.failedCount || 0) + summary.failed,
+      lastContactId: contacts[contacts.length - 1].id,
+      errors,
+      completedAt: hasMore ? null : new Date(),
+    });
+    if (hasMore) {
+      await queueJobs.enqueueJob({
+        jobType: queueJobs.JOB_TYPES.AUTOMATION_ENROLLMENT,
+        locationId: job.locationId,
+        priority: 50,
+        payload: { enrollmentJobId: job.id },
+      });
+    }
+    return serializeEnrollmentJob(updated);
+  } catch (err) {
+    await job.update({ status: "failed", lastError: err.message || String(err), completedAt: new Date() });
+    throw err;
+  }
 }
 
 async function triggerWorkflowsForEvent(event = {}) {
@@ -415,6 +557,7 @@ module.exports = {
   getWorkflow,
   listRuns,
   listWorkflows,
+  processAutomationEnrollmentJob,
   testWorkflow,
   triggerWorkflowsForEvent,
   updateWorkflow,

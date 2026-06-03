@@ -9,11 +9,15 @@
     "seed": "npx sequelize-cli db:seed:all",
     "seed:undo": "npx sequelize-cli db:seed:undo",
     "predev": "npm run migrate && npm run seed",
-    "dev": "nodemon src/server.js & API_PID=$!; npm run worker:transactional & TX_PID=$!; npm run worker:marketing & MK_PID=$!; npm run worker:webhooks & WH_PID=$!; trap 'kill $API_PID $TX_PID $MK_PID $WH_PID 2>/dev/null' INT TERM EXIT; wait",
     "worker:transactional": "node src/workers/transactionalWorker.js",
     "worker:marketing": "node src/workers/marketingWorker.js",
+    "worker:marketing-audience": "node src/workers/marketingAudienceWorker.js",
     "worker:webhooks": "node src/workers/sesWebhookWorker.js",
+    "worker:contacts": "node src/workers/contactsWorker.js",
+    "worker:segments": "node src/workers/segmentsWorker.js",
+    "worker:automation": "node src/workers/automationWorker.js",
     "start": "node src/server.js",
+    "dev": "nodemon src/server.js & API_PID=$!; npm run worker:transactional & TX_PID=$!; npm run worker:marketing & MK_PID=$!; npm run worker:marketing-audience & MA_PID=$!; npm run worker:webhooks & WH_PID=$!; npm run worker:contacts & CW_PID=$!; npm run worker:segments & SW_PID=$!; npm run worker:automation & AW_PID=$!; trap 'kill $API_PID $TX_PID $MK_PID $MA_PID $WH_PID $CW_PID $SW_PID $AW_PID 2>/dev/null' INT TERM EXIT; wait",
     "test": "node --test"
   },
   "keywords": [

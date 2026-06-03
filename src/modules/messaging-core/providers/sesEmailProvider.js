@@ -14,7 +14,7 @@ function getSmtpTransporter() {
   if (!smtpTransporter) {
     const smtp = config.email.smtp;
     if (!smtp.user || !smtp.pass) {
-      throw new Error("SMTP email is enabled but SMTP_USER/EMAIL_FROM or SMTP_PASS/EMAIL_PASSWORD is missing.");
+      throw new Error("SMTP email is enabled but SMTP_USER or SMTP_PASS is missing.");
     }
     smtpTransporter = nodemailer.createTransport({
       host: smtp.host,

@@ -19,6 +19,8 @@ const { enqueueMarketingMessage } = require("../../messaging-core/aws/sqsClient"
 const { uploadMarketingAsset } = require("./assetUpload");
 const marketingMessageRepository = require("./messageRepository");
 const suppressionService = require("./suppressionService");
+const contactService = require("../../contacts/service");
+const queueJobs = require("../../queueJobs/service");
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -128,6 +130,34 @@ function stripHtml(value) {
 
 function unique(values) {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function serializeAudienceJob(row) {
+  if (!row) return null;
+  const data = row.get ? row.get({ plain: true }) : row;
+  return {
+    id: data.id,
+    locationId: data.locationId,
+    campaignId: data.campaignId,
+    templateId: data.templateId,
+    audience: data.audience || {},
+    sendOptions: data.sendOptions || {},
+    status: data.status,
+    totalTargeted: data.totalTargeted,
+    processedCount: data.processedCount || 0,
+    queuedCount: data.queuedCount || 0,
+    suppressedCount: data.suppressedCount || 0,
+    duplicateCount: data.duplicateCount || 0,
+    ineligibleCount: data.ineligibleCount || 0,
+    failedCount: data.failedCount || 0,
+    lastContactId: data.lastContactId || null,
+    errors: data.errors || [],
+    startedAt: data.startedAt,
+    completedAt: data.completedAt,
+    lastError: data.lastError,
+    createdAt: data.createdAt,
+    updatedAt: data.updatedAt,
+  };
 }
 
 function extractMergeTags(value) {
@@ -1269,7 +1299,7 @@ async function preflightCampaignMessages(campaignId, body = {}) {
         key: "trackingBaseUrl",
         ok: !compliance.usesRuntimeUnsubscribe || compliance.hasRuntimeUrlBase,
         message: compliance.usesRuntimeUnsubscribe && !compliance.hasRuntimeUrlBase
-          ? "Set CRM_TRACKING_BASE_URL or CRM_PUBLIC_BASE_URL so unsubscribe links render as full URLs."
+          ? "Set CRM_TRACKING_BASE_URL so unsubscribe links render as full URLs."
           : "Public marketing links can be generated.",
       });
       templateValidation = validateTemplateBeforeSend(template, {
@@ -1359,29 +1389,56 @@ async function preflightCampaignMessages(campaignId, body = {}) {
   };
 }
 
-async function queueCampaignMessages(campaignId, body = {}) {
-  const { CrmMarketingCampaign, CrmMarketingTemplate } = getModels();
-  const campaign = await CrmMarketingCampaign.findByPk(campaignId);
-  if (!campaign) throw notFound("Campaign");
-  validate([
-    campaign.status === "paused" && { field: "status", message: "Resume the campaign before queueing more recipients." },
-    campaign.status === "cancelled" && { field: "status", message: "Cancelled campaigns cannot be queued." },
-  ]);
+function hasAudienceSelection(body = {}) {
+  const audience = body.audience && typeof body.audience === "object" ? body.audience : body;
+  return Boolean(
+    audience.allowAll
+      || audience.segmentId
+      || (Array.isArray(audience.segmentIds) && audience.segmentIds.length)
+      || audience.filters
+      || audience.search
+      || (Array.isArray(audience.ids) && audience.ids.length)
+      || (Array.isArray(audience.contactIds) && audience.contactIds.length)
+  );
+}
 
-  const recipientInput = Array.isArray(body.recipients) ? body.recipients : [];
-  const recipients = normalizeRecipients(recipientInput);
+function normalizeCampaignAudience(body = {}) {
+  const raw = body.audience && typeof body.audience === "object" ? body.audience : body;
+  const ids = Array.isArray(raw.ids) ? raw.ids : raw.contactIds;
+  return {
+    segmentId: raw.segmentId || null,
+    segmentIds: Array.isArray(raw.segmentIds) ? raw.segmentIds.map((id) => String(id)).filter(Boolean) : [],
+    filters: raw.filters || null,
+    search: raw.search || "",
+    allowAll: raw.allowAll === true,
+    ids: Array.isArray(ids) ? ids.map((id) => String(id)).filter(Boolean) : [],
+  };
+}
+
+function campaignSendOptions(body = {}) {
+  return {
+    queueType: body.queueType === "journey" ? "journey" : "bulk",
+    allowResend: body.allowResend === true,
+    subject: body.subject || null,
+    from: body.from || null,
+    data: body.data && typeof body.data === "object" ? body.data : {},
+    source: body.source || "campaign_audience",
+    batchSize: Math.min(1000, Math.max(50, Number(body.batchSize || 500))),
+  };
+}
+
+async function validateCampaignQueueContext(campaign, body = {}, recipients = []) {
+  const { CrmMarketingTemplate } = getModels();
   const templateId = body.templateId || campaign.templateId;
   validate([
     !templateId && { field: "templateId", message: "Choose a template before queueing a campaign." },
-    recipients.length === 0 && { field: "recipients", message: "At least one recipient is required." },
-    recipients.length !== recipientInput.length && { field: "recipients", message: "Every recipient must include a valid email address." },
-    recipients.length > 500 && { field: "recipients", message: "Queue at most 500 recipients per request." },
   ]);
 
   const template = await CrmMarketingTemplate.findByPk(templateId);
   if (!template) throw notFound("Template");
-  const compliance = analyzeTemplateCompliance(template);
+
   const globalData = mergeBusinessDefaults(body.data && typeof body.data === "object" ? body.data : {});
+  const compliance = analyzeTemplateCompliance(template);
   const templateValidation = validateTemplateBeforeSend(template, {
     subject: body.subject || campaign.name,
     recipients,
@@ -1398,13 +1455,91 @@ async function queueCampaignMessages(campaignId, body = {}) {
     },
     compliance.usesRuntimeUnsubscribe && !compliance.hasRuntimeUrlBase && {
       field: "templateId",
-      message: "Set CRM_TRACKING_BASE_URL or CRM_PUBLIC_BASE_URL before queueing templates that use {{unsubscribeUrl}}.",
+      message: "Set CRM_TRACKING_BASE_URL before queueing templates that use {{unsubscribeUrl}}.",
     },
     ...templateValidation.errors.map((issue) => ({
       field: issue.key,
       message: issue.message,
     })),
   ]);
+
+  return { template, templateId, globalData };
+}
+
+async function createCampaignAudienceJob(campaign, body = {}) {
+  const { CrmMarketingCampaignAudienceJob } = getModels();
+  const audience = normalizeCampaignAudience(body);
+  validate([
+    !audience.allowAll && !audience.segmentId && !audience.segmentIds.length && !audience.filters && !audience.search && !audience.ids.length && {
+      field: "audience",
+      message: "Choose contacts, a segment, filters, search, or allowAll before queueing a campaign audience.",
+    },
+  ]);
+
+  const { templateId } = await validateCampaignQueueContext(campaign, body, []);
+  const sendOptions = campaignSendOptions(body);
+  const job = await CrmMarketingCampaignAudienceJob.create({
+    locationId: campaign.locationId,
+    campaignId: campaign.id,
+    templateId,
+    audience,
+    sendOptions,
+    status: "queued",
+  });
+  await campaign.update({
+    templateId,
+    status: "sending",
+    executionDate: campaign.executionDate || new Date(),
+  });
+  const queueJob = await queueJobs.enqueueJob({
+    jobType: queueJobs.JOB_TYPES.MARKETING_CAMPAIGN_AUDIENCE,
+    locationId: campaign.locationId,
+    priority: 45,
+    payload: { campaignAudienceJobId: job.id },
+  });
+
+  return {
+    campaign: serializeCampaign(await campaign.reload()),
+    audienceJob: serializeAudienceJob(job),
+    queueJob,
+    queued: [],
+    totalQueued: 0,
+    suppressed: [],
+    totalSuppressed: 0,
+    duplicates: [],
+    totalDuplicates: 0,
+    existing: [],
+    totalExisting: 0,
+    allowResend: sendOptions.allowResend,
+    queueType: sendOptions.queueType,
+    mode: "audience_job",
+  };
+}
+
+async function queueCampaignMessages(campaignId, body = {}) {
+  const { CrmMarketingCampaign, CrmMarketingTemplate } = getModels();
+  const campaign = await CrmMarketingCampaign.findByPk(campaignId);
+  if (!campaign) throw notFound("Campaign");
+  validate([
+    campaign.status === "paused" && { field: "status", message: "Resume the campaign before queueing more recipients." },
+    campaign.status === "cancelled" && { field: "status", message: "Cancelled campaigns cannot be queued." },
+  ]);
+
+  if (hasAudienceSelection(body)) {
+    return createCampaignAudienceJob(campaign, body);
+  }
+
+  const recipientInput = Array.isArray(body.recipients) ? body.recipients : [];
+  const recipients = normalizeRecipients(recipientInput);
+  const templateId = body.templateId || campaign.templateId;
+  validate([
+    !templateId && { field: "templateId", message: "Choose a template before queueing a campaign." },
+    recipients.length === 0 && { field: "recipients", message: "At least one recipient is required." },
+    recipients.length !== recipientInput.length && { field: "recipients", message: "Every recipient must include a valid email address." },
+    recipients.length > 500 && { field: "recipients", message: "Queue at most 500 recipients per request." },
+  ]);
+
+  const { globalData } = await validateCampaignQueueContext(campaign, body, recipients);
 
   const queueType = body.queueType === "journey" ? "journey" : "bulk";
   const allowResend = body.allowResend === true;
@@ -1546,7 +1681,7 @@ async function retryCampaignMessage(messageId, body = {}) {
     },
     compliance.usesRuntimeUnsubscribe && !compliance.hasRuntimeUrlBase && {
       field: "templateId",
-      message: "Set CRM_TRACKING_BASE_URL or CRM_PUBLIC_BASE_URL before retrying templates that use {{unsubscribeUrl}}.",
+      message: "Set CRM_TRACKING_BASE_URL before retrying templates that use {{unsubscribeUrl}}.",
     },
     ...templateValidation.errors.map((issue) => ({
       field: issue.key,
@@ -1912,11 +2047,272 @@ async function enqueueSingleMessage({ locationId, templateId, recipient, data = 
   return { status: updated.status, messageId: updated.id, skipped: Boolean(enqueue?.skipped) };
 }
 
+async function listCampaignAudienceJobs(query = {}) {
+  const { CrmMarketingCampaignAudienceJob } = getModels();
+  const where = {};
+  if (query.locationId) where.locationId = Number(query.locationId);
+  if (query.campaignId) where.campaignId = query.campaignId;
+  if (query.status) where.status = String(query.status);
+  const limit = Math.min(100, Math.max(1, Number(query.limit || query.pageSize || 25)));
+  const rows = await CrmMarketingCampaignAudienceJob.findAll({
+    where,
+    limit,
+    order: [["createdAt", "DESC"]],
+  });
+  return { items: rows.map(serializeAudienceJob), pageSize: limit };
+}
+
+async function getCampaignAudienceJob(id, query = {}) {
+  const { CrmMarketingCampaignAudienceJob } = getModels();
+  const where = { id };
+  if (query.locationId) where.locationId = Number(query.locationId);
+  const row = await CrmMarketingCampaignAudienceJob.findOne({ where });
+  if (!row) throw notFound("Campaign audience job");
+  return serializeAudienceJob(row);
+}
+
+function contactMessageData(contact) {
+  return {
+    contact: {
+      id: contact.id,
+      email: contact.email,
+      firstName: contact.firstName,
+      lastName: contact.lastName,
+      fullName: contact.fullName,
+      phone: contact.phone,
+      lifecycle: contact.lifecycle,
+      tags: Array.isArray(contact.tags) ? contact.tags : [],
+      customFields: contact.customFields || {},
+    },
+  };
+}
+
+async function buildAudienceContactScope(models, locationId, audience = {}) {
+  const customFields = await contactService.loadCustomFields(locationId);
+  const segmentIds = Array.isArray(audience.segmentIds) && audience.segmentIds.length
+    ? audience.segmentIds
+    : (audience.segmentId ? [audience.segmentId] : []);
+  const scope = contactService.buildSearchScope(models, locationId, {
+    segmentId: segmentIds.length === 1 ? segmentIds[0] : null,
+    filters: audience.filters,
+    search: audience.search,
+    customFields,
+  });
+  if (segmentIds.length > 1) {
+    scope.include = [{
+      model: models.CrmSegmentMember,
+      as: "segmentMemberships",
+      where: { segmentId: { [Op.in]: segmentIds }, status: "active" },
+      attributes: [],
+      required: true,
+    }];
+  }
+  const ids = Array.isArray(audience.ids) ? audience.ids.filter(Boolean) : [];
+  if (ids.length) {
+    scope.where = { [Op.and]: [scope.where, { id: { [Op.in]: ids } }] };
+  }
+  return scope;
+}
+
+async function processCampaignAudienceBatch(job) {
+  const models = getModels();
+  const audience = job.audience || {};
+  const sendOptions = job.sendOptions || {};
+  const batchSize = Math.min(1000, Math.max(50, Number(sendOptions.batchSize || 500)));
+  const campaign = await models.CrmMarketingCampaign.findOne({ where: { id: job.campaignId, locationId: job.locationId } });
+  if (!campaign) throw notFound("Campaign");
+  if (campaign.status === "cancelled") {
+    const updated = await job.update({ status: "cancelled", completedAt: new Date(), lastError: "campaign_cancelled" });
+    return serializeAudienceJob(updated);
+  }
+  if (campaign.status === "paused") {
+    const updated = await job.update({ status: "queued", lastError: "campaign_paused" });
+    return serializeAudienceJob(updated);
+  }
+
+  await validateCampaignQueueContext(campaign, { ...sendOptions, templateId: job.templateId }, []);
+  if (!job.startedAt) await job.update({ status: "processing", startedAt: new Date(), lastError: null });
+  else await job.update({ status: "processing", lastError: null });
+
+  const { where, include } = await buildAudienceContactScope(models, job.locationId, audience);
+  if (job.totalTargeted === null || job.totalTargeted === undefined) {
+    const totalTargeted = await models.CrmContact.count({ where, include, distinct: include.length > 0 });
+    await job.update({ totalTargeted });
+  }
+
+  const pageWhere = job.lastContactId
+    ? { [Op.and]: [where, { id: { [Op.gt]: job.lastContactId } }] }
+    : where;
+  const contacts = await models.CrmContact.findAll({
+    where: pageWhere,
+    include,
+    order: [["id", "ASC"]],
+    limit: batchSize,
+  });
+
+  if (!contacts.length) {
+    const finalStatus = Number(job.failedCount || 0) > 0 ? "completed_with_errors" : "completed";
+    const updated = await job.update({ status: finalStatus, completedAt: new Date() });
+    await campaign.reload();
+    if (campaign.status === "sending") await campaign.update({ status: "sent" });
+    return serializeAudienceJob(updated);
+  }
+
+  let processedCount = 0;
+  let queuedCount = 0;
+  let suppressedCount = 0;
+  let duplicateCount = 0;
+  let ineligibleCount = 0;
+  let failedCount = 0;
+  const errors = Array.isArray(job.errors) ? [...job.errors] : [];
+  const globalData = mergeBusinessDefaults(sendOptions.data && typeof sendOptions.data === "object" ? sendOptions.data : {});
+  const eligible = [];
+
+  for (const contact of contacts) {
+    processedCount += 1;
+    const email = String(contact.email || "").trim();
+    if (!EMAIL_RE.test(email) || contact.marketingStatus !== "subscribed" || contact.doNotContact) {
+      ineligibleCount += 1;
+      continue;
+    }
+    eligible.push({ contact, email, normalizedEmail: email.toLowerCase() });
+  }
+
+  const normalizedEmails = Array.from(new Set(eligible.map((item) => item.normalizedEmail)));
+  const suppressions = normalizedEmails.length
+    ? await models.CrmMarketingSuppression.findAll({
+        where: {
+          locationId: job.locationId,
+          email: { [Op.in]: normalizedEmails },
+          active: true,
+          scope: "marketing",
+        },
+      })
+    : [];
+  const suppressedEmails = new Set(suppressions.map((row) => String(row.email || "").toLowerCase()));
+  const existingMessages = !sendOptions.allowResend && normalizedEmails.length
+    ? await models.CrmMarketingMessage.findAll({
+        where: {
+          campaignId: campaign.id,
+          recipient: { [Op.in]: normalizedEmails },
+        },
+        attributes: ["recipient"],
+      })
+    : [];
+  const existingEmails = new Set(existingMessages.map((row) => String(row.recipient || "").toLowerCase()));
+  const seenInBatch = new Set();
+
+  for (const item of eligible) {
+    if (seenInBatch.has(item.normalizedEmail) || existingEmails.has(item.normalizedEmail)) {
+      duplicateCount += 1;
+      continue;
+    }
+    seenInBatch.add(item.normalizedEmail);
+    if (suppressedEmails.has(item.normalizedEmail)) {
+      suppressedCount += 1;
+      continue;
+    }
+
+    try {
+      const payload = {
+        data: { ...globalData, ...contactMessageData(item.contact) },
+        from: sendOptions.from || undefined,
+        subject: sendOptions.subject || undefined,
+      };
+      const message = await marketingMessageRepository.createMessage({
+        locationId: campaign.locationId,
+        campaignId: campaign.id,
+        templateId: job.templateId,
+        channel: "email",
+        recipient: item.normalizedEmail,
+        subject: sendOptions.subject || campaign.name,
+        payload,
+        metadata: {
+          queueType: sendOptions.queueType || "bulk",
+          source: sendOptions.source || "campaign_audience",
+          audienceJobId: job.id,
+          contactId: item.contact.id,
+        },
+      });
+      const enqueue = await enqueueMarketingMessage({
+        messageId: message.id,
+        campaignId: campaign.id,
+        channel: "email",
+        queueType: sendOptions.queueType || "bulk",
+      });
+      const updated = await marketingMessageRepository.markQueued(message, enqueue);
+      await marketingMessageRepository.createDeliveryEvent({
+        messageId: updated.id,
+        campaignId: campaign.id,
+        eventType: enqueue?.skipped ? "enqueue_skipped" : "queued",
+        payload: { source: "campaign_audience", enqueue, queueType: sendOptions.queueType || "bulk", audienceJobId: job.id },
+      });
+      queuedCount += 1;
+    } catch (err) {
+      failedCount += 1;
+      if (errors.length < 25) {
+        errors.push({ contactId: item.contact.id, email: item.normalizedEmail, message: err.message || String(err) });
+      }
+    }
+  }
+
+  const lastContactId = contacts[contacts.length - 1].id;
+  const hasMore = contacts.length === batchSize;
+  const updated = await job.update({
+    status: hasMore ? "queued" : (Number(job.failedCount || 0) + failedCount > 0 ? "completed_with_errors" : "completed"),
+    processedCount: Number(job.processedCount || 0) + processedCount,
+    queuedCount: Number(job.queuedCount || 0) + queuedCount,
+    suppressedCount: Number(job.suppressedCount || 0) + suppressedCount,
+    duplicateCount: Number(job.duplicateCount || 0) + duplicateCount,
+    ineligibleCount: Number(job.ineligibleCount || 0) + ineligibleCount,
+    failedCount: Number(job.failedCount || 0) + failedCount,
+    lastContactId,
+    errors,
+    completedAt: hasMore ? null : new Date(),
+  });
+
+  if (queuedCount) await campaign.increment("totalRecipients", { by: queuedCount });
+  if (hasMore) {
+    await queueJobs.enqueueJob({
+      jobType: queueJobs.JOB_TYPES.MARKETING_CAMPAIGN_AUDIENCE,
+      locationId: job.locationId,
+      priority: 45,
+      payload: { campaignAudienceJobId: job.id },
+    });
+  } else {
+    await campaign.reload();
+    if (campaign.status === "sending") await campaign.update({ status: "sent" });
+  }
+  return serializeAudienceJob(updated);
+}
+
+async function processCampaignAudienceJob(campaignAudienceJobId) {
+  const { CrmMarketingCampaignAudienceJob } = getModels();
+  const job = await CrmMarketingCampaignAudienceJob.findByPk(campaignAudienceJobId);
+  if (!job) throw notFound("Campaign audience job");
+  try {
+    return await processCampaignAudienceBatch(job);
+  } catch (err) {
+    const errors = Array.isArray(job.errors) ? job.errors : [];
+    await job.update({
+      status: "failed",
+      failedCount: Number(job.failedCount || 0) + 1,
+      errors: errors.length < 25 ? [...errors, { message: err.message || String(err) }] : errors,
+      lastError: err.message || String(err || "Audience job failed"),
+      completedAt: new Date(),
+    });
+    throw err;
+  }
+}
+
 module.exports = {
   getTemplateBuilderCatalog,
   getMergeTagCatalog,
   validateTemplateBeforeSend,
   enqueueSingleMessage,
+  listCampaignAudienceJobs,
+  getCampaignAudienceJob,
+  processCampaignAudienceJob,
   // folders
   listFolders,
   createFolder,

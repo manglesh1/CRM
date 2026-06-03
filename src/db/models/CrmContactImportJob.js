@@ -36,6 +36,14 @@ function defineCrmContactImportJob(sequelize) {
         allowNull: false,
         defaultValue: [],
       },
+      payload: {
+        type: DataTypes.JSONB,
+        allowNull: false,
+        defaultValue: {},
+      },
+      startedAt: { type: DataTypes.DATE, allowNull: true },
+      completedAt: { type: DataTypes.DATE, allowNull: true },
+      lastError: { type: DataTypes.TEXT, allowNull: true },
     },
     {
       tableName: "crm_contact_import_jobs",

@@ -1,6 +1,11 @@
 const { Op } = require("sequelize");
 const { getModels } = require("../../db/models");
+const contactService = require("../contacts/service");
 const filterEngine = require("../contacts/filterEngine");
+
+const MAX_PREVIEW_CONDITIONS = 20;
+const MAX_PREVIEW_DEPTH = 3;
+const SEGMENT_REFRESH_BATCH_SIZE = 2000;
 
 async function loadCustomFields(locationId) {
   const models = getModels();
@@ -42,6 +47,16 @@ function plain(row) {
   return row?.get ? row.get({ plain: true }) : row;
 }
 
+function assertPreviewGuardrails(filters = {}) {
+  const stats = filterEngine.analyze(filters || {});
+  if (stats.conditions > MAX_PREVIEW_CONDITIONS) {
+    throw badRequest(`Preview supports up to ${MAX_PREVIEW_CONDITIONS} conditions. Save as a segment to calculate larger filters in the queue.`);
+  }
+  if (stats.depth > MAX_PREVIEW_DEPTH) {
+    throw badRequest(`Preview supports up to ${MAX_PREVIEW_DEPTH} nested levels. Save as a segment to calculate deeper filters in the queue.`);
+  }
+}
+
 const STALE_SEGMENT_NAMES = new Set([
   "movira customers",
   "subscribed imported customers",
@@ -69,17 +84,21 @@ async function evaluateSegmentFilters({ locationId, filters = {}, page = 1, page
   const loc = requireLocation(locationId);
   const limit = Math.min(100, Math.max(1, Number(pageSize || 25)));
   const currentPage = Math.max(1, Number(page || 1));
+  assertPreviewGuardrails(filters);
   const customFields = await loadCustomFields(loc);
   const where = buildContactWhere(loc, filters, customFields);
-  const result = await models.CrmContact.findAndCountAll({
+  const rows = await models.CrmContact.findAll({
     where,
-    limit,
+    limit: limit + 1,
     offset: (currentPage - 1) * limit,
     order: [["updatedAt", "DESC"]],
   });
+  const hasMore = rows.length > limit;
   return {
-    items: result.rows.map(plain),
-    total: result.count,
+    items: rows.slice(0, limit).map(plain),
+    total: null,
+    hasMore,
+    countMode: "skipped_for_preview",
     page: currentPage,
     pageSize: limit,
   };
@@ -88,51 +107,70 @@ async function evaluateSegmentFilters({ locationId, filters = {}, page = 1, page
 async function refreshSegmentMembers(segment, transaction = null) {
   const models = getModels();
   const customFields = await loadCustomFields(segment.locationId);
-  const contactRows = await models.CrmContact.findAll({
-    where: buildContactWhere(segment.locationId, segment.filters || {}, customFields),
-    attributes: ["id"],
-    transaction,
-  });
-  const contactIds = contactRows.map((row) => row.id);
-
-  // Preserve manually-added members; only recompute the filter-derived ones.
   const existingMembers = await models.CrmSegmentMember.findAll({
     where: { segmentId: segment.id },
     attributes: ["contactId", "source"],
     transaction,
+    raw: true,
   });
   const existingActiveIds = new Set(existingMembers.map((m) => m.contactId));
   const manualIds = new Set(existingMembers.filter((m) => m.source === "manual").map((m) => m.contactId));
 
+  // Preserve manually-added members; only recompute filter-derived rows.
   await models.CrmSegmentMember.destroy({
     where: { segmentId: segment.id, source: "filter" },
     transaction,
   });
 
-  const filterIds = contactIds.filter((id) => !manualIds.has(id));
-  if (filterIds.length) {
-    await models.CrmSegmentMember.bulkCreate(
-      filterIds.map((contactId) => ({
-        segmentId: segment.id,
-        contactId,
-        locationId: segment.locationId,
-        source: "filter",
-        status: "active",
-        enteredAt: new Date(),
-      })),
-      { transaction }
-    );
+  const baseWhere = buildContactWhere(segment.locationId, segment.filters || {}, customFields);
+  const enteredContactIds = [];
+  let filterMemberCount = 0;
+  let lastId = null;
+
+  while (true) {
+    const where = lastId ? { ...baseWhere, id: { [Op.gt]: lastId } } : baseWhere;
+    const contactRows = await models.CrmContact.findAll({
+      where,
+      attributes: ["id"],
+      limit: SEGMENT_REFRESH_BATCH_SIZE,
+      order: [["id", "ASC"]],
+      transaction,
+      raw: true,
+    });
+    if (!contactRows.length) break;
+
+    const contactIds = contactRows.map((row) => row.id);
+    const filterIds = contactIds.filter((id) => !manualIds.has(id));
+    if (filterIds.length) {
+      filterMemberCount += filterIds.length;
+      filterIds.forEach((id) => {
+        if (!existingActiveIds.has(id)) enteredContactIds.push(id);
+      });
+      await models.CrmSegmentMember.bulkCreate(
+        filterIds.map((contactId) => ({
+          segmentId: segment.id,
+          contactId,
+          locationId: segment.locationId,
+          source: "filter",
+          status: "active",
+          enteredAt: new Date(),
+        })),
+        { transaction }
+      );
+    }
+
+    lastId = contactRows[contactRows.length - 1].id;
+    if (contactRows.length < SEGMENT_REFRESH_BATCH_SIZE) break;
   }
 
   const updated = await segment.update(
     {
-      memberCount: manualIds.size + filterIds.length,
+      memberCount: manualIds.size + filterMemberCount,
       lastCalculatedAt: new Date(),
     },
     { transaction }
   );
-  const nextIds = new Set([...manualIds, ...filterIds]);
-  const enteredContactIds = Array.from(nextIds).filter((id) => !existingActiveIds.has(id));
+  await contactService.markContactFilterCountsStale(segment.locationId, "segment_members_refreshed");
   return { ...plain(updated), enteredContactIds };
 }
 
@@ -166,20 +204,16 @@ async function createSegment(input = {}) {
   if (!name) throw badRequest("Segment name is required");
   const filters = input.filters && typeof input.filters === "object" ? input.filters : {};
 
-  return models.sequelize.transaction(async (transaction) => {
-    const segment = await models.CrmSegment.create(
-      {
-        locationId,
-        name,
-        description: cleanString(input.description, 2000),
-        segmentType: cleanString(input.segmentType || "dynamic", 40) || "dynamic",
-        status: cleanString(input.status || "active", 40) || "active",
-        filters,
-      },
-      { transaction }
-    );
-    return refreshSegmentMembers(segment, transaction);
+  const segment = await models.CrmSegment.create({
+    locationId,
+    name,
+    description: cleanString(input.description, 2000),
+    segmentType: cleanString(input.segmentType || "dynamic", 40) || "dynamic",
+    status: cleanString(input.status || "active", 40) || "active",
+    filters,
   });
+  await contactService.markContactFilterCountsStale(locationId, "segment_created");
+  return { ...plain(segment), refreshQueued: true };
 }
 
 async function updateSegment(id, input = {}) {
@@ -194,13 +228,9 @@ async function updateSegment(id, input = {}) {
   if (input.segmentType !== undefined) patch.segmentType = cleanString(input.segmentType, 40);
   if (input.filters !== undefined) patch.filters = input.filters && typeof input.filters === "object" ? input.filters : {};
 
-  return models.sequelize.transaction(async (transaction) => {
-    const updated = await segment.update(patch, { transaction });
-    if (input.filters !== undefined || input.refresh === true) {
-      return refreshSegmentMembers(updated, transaction);
-    }
-    return plain(updated);
-  });
+  const updated = await segment.update(patch);
+  await contactService.markContactFilterCountsStale(locationId, "segment_updated");
+  return { ...plain(updated), refreshQueued: input.filters !== undefined || input.refresh === true };
 }
 
 async function deleteSegment(id, query = {}) {
@@ -210,6 +240,7 @@ async function deleteSegment(id, query = {}) {
   if (!segment) throw notFound("Segment");
   const data = plain(segment);
   await segment.destroy();
+  await contactService.markContactFilterCountsStale(locationId, "segment_deleted");
   return data;
 }
 
