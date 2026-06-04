@@ -1,6 +1,7 @@
 const repository = require("./messageRepository");
 const dispatcher = require("./messageDispatcher");
 const rateLimiter = require("./sendRateLimiter");
+const suppressionService = require("./suppressionService");
 
 const TERMINAL_STATUSES = ["sent", "delivered", "bounced", "complained", "unsubscribed", "cancelled"];
 
@@ -58,6 +59,26 @@ async function processMarketingSqsMessage(sqsMessage) {
       payload: { source: "marketing-worker", reason: "campaign_cancelled" },
     });
     return { skipped: true, reason: "campaign_cancelled", messageId: message.id };
+  }
+
+  const suppression = await suppressionService.isSuppressed(message.locationId, message.recipient);
+  if (suppression) {
+    await message.update({
+      status: "cancelled",
+      metadata: {
+        ...(message.metadata || {}),
+        suppressedAt: new Date().toISOString(),
+        suppressionId: suppression.id,
+        suppressionReason: suppression.reason,
+      },
+    });
+    await repository.createDeliveryEvent({
+      messageId: message.id,
+      campaignId: message.campaignId,
+      eventType: "suppressed",
+      payload: { source: "marketing-worker", suppressionId: suppression.id, reason: suppression.reason },
+    });
+    return { skipped: true, reason: "recipient_suppressed", messageId: message.id };
   }
 
   await rateLimiter.assertCanSend(message, { queueType: body.queueType || null });

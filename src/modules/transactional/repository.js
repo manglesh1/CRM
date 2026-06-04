@@ -78,6 +78,23 @@ async function markFailed(message, error) {
   });
 }
 
+async function markSuppressed(message, suppression) {
+  await message.update({
+    status: STATUS.CANCELLED,
+    lastError: "recipient_suppressed",
+  });
+  await createDeliveryEvent({
+    messageId: message.id,
+    eventType: "suppressed",
+    payload: {
+      source: "transactional-suppression",
+      suppressionId: suppression?.id || null,
+      reason: suppression?.reason || null,
+    },
+  });
+  return message;
+}
+
 async function createDeliveryEvent({
   messageId,
   provider = null,
@@ -168,6 +185,7 @@ module.exports = {
   markSending,
   markSent,
   markFailed,
+  markSuppressed,
   createDeliveryEvent,
   listTemplates,
   findTemplateById,

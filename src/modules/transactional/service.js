@@ -2,6 +2,7 @@ const repository = require("./repository");
 const { validateCreateMessage } = require("./validation");
 const { enqueueTransactionalMessage } = require("../messaging-core/aws/sqsClient");
 const { STATUS } = require("./constants");
+const suppressionService = require("../marketing/email/suppressionService");
 
 function shouldProcessInline(enqueue) {
   if (!enqueue?.skipped || enqueue.reason !== "missing_queue_url") return false;
@@ -66,6 +67,17 @@ async function enqueueMessage(body) {
   }
 
   const message = await repository.createMessage(validation.value);
+  if (message.channel === "email") {
+    const suppression = await suppressionService.isSuppressed(message.locationId, message.recipientAddress);
+    if (suppression) {
+      const suppressed = await repository.markSuppressed(message, suppression);
+      return {
+        duplicate: false,
+        message: suppressed,
+        enqueue: { skipped: true, reason: "recipient_suppressed", suppressionId: suppression.id },
+      };
+    }
+  }
   const enqueue = await enqueueTransactionalMessage({
     messageId: message.id,
     channel: message.channel,

@@ -2185,7 +2185,6 @@ async function processCampaignAudienceBatch(job) {
           locationId: job.locationId,
           email: { [Op.in]: normalizedEmails },
           active: true,
-          scope: "marketing",
         },
       })
     : [];

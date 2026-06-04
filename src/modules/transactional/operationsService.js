@@ -5,6 +5,7 @@ const repository = require("./repository");
 const { enqueueTransactionalMessage } = require("../messaging-core/aws/sqsClient");
 const sqs = require("../messaging-core/aws/sqsClient");
 const { STATUS } = require("./constants");
+const suppressionService = require("../marketing/email/suppressionService");
 
 const STATUSES = [
   STATUS.PENDING,
@@ -274,6 +275,17 @@ async function retryMessage(messageId, body = {}) {
     const err = new Error("Only failed, pending, or enqueue-skipped transactional messages can be retried.");
     err.statusCode = 400;
     throw err;
+  }
+
+  if (message.channel === "email") {
+    const suppression = await suppressionService.isSuppressed(message.locationId, message.recipientAddress);
+    if (suppression) {
+      const suppressed = await repository.markSuppressed(message, suppression);
+      return {
+        message: serializeMessage(suppressed),
+        enqueue: { skipped: true, reason: "recipient_suppressed", suppressionId: suppression.id },
+      };
+    }
   }
 
   await message.update({ status: STATUS.PENDING, failedAt: null, lastError: null });

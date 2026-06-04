@@ -1,6 +1,7 @@
 const repository = require("./repository");
 const dispatcher = require("./dispatcher");
 const { DELIVERY_EVENT, STATUS } = require("./constants");
+const suppressionService = require("../marketing/email/suppressionService");
 
 async function processTransactionalSqsMessage(sqsMessage) {
   const body = parseBody(sqsMessage.Body);
@@ -19,6 +20,14 @@ async function processTransactionalSqsMessage(sqsMessage) {
       reason: `message_already_${message.status}`,
       messageId: message.id,
     };
+  }
+
+  if (message.channel === "email") {
+    const suppression = await suppressionService.isSuppressed(message.locationId, message.recipientAddress);
+    if (suppression) {
+      await repository.markSuppressed(message, suppression);
+      return { skipped: true, reason: "recipient_suppressed", messageId: message.id };
+    }
   }
 
   try {

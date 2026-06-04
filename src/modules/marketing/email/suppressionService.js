@@ -68,13 +68,12 @@ async function findActiveSuppression(locationId, email) {
       locationId: Number(locationId),
       email: normalizeEmail(email),
       active: true,
-      scope: "marketing",
     },
     order: [["suppressedAt", "DESC"]],
   });
 }
 
-async function suppressEmail({ locationId, email, reason = "manual", source = "manual", campaignId = null, messageId = null, metadata = {} } = {}) {
+async function suppressEmail({ locationId, email, reason = "manual", source = "manual", scope = "global", campaignId = null, messageId = null, metadata = {} } = {}) {
   const normalized = normalizeEmail(email);
   validate([
     !locationId && { field: "locationId", message: "locationId is required" },
@@ -101,7 +100,7 @@ async function suppressEmail({ locationId, email, reason = "manual", source = "m
     email: normalized,
     reason,
     source,
-    scope: "marketing",
+    scope: scope || "global",
     campaignId,
     messageId,
     metadata,
