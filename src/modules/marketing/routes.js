@@ -1,6 +1,7 @@
 const express = require("express");
 const emailRoutes = require("./email/routes");
 const triggerLinksRoutes = require("./triggerLinks/routes");
+const calendarRoutes = require("./calendar/routes");
 
 const router = express.Router();
 
@@ -18,5 +19,6 @@ router.get("/overview", (_req, res) => {
 
 router.use("/email", emailRoutes);
 router.use("/trigger-links", triggerLinksRoutes);
+router.use("/calendar", calendarRoutes);
 
 module.exports = router;
