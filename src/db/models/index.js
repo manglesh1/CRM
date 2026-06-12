@@ -5,6 +5,8 @@ const defineTransactionalDeliveryEvent = require("./TransactionalDeliveryEvent")
 const defineCrmProviderConfig = require("./CrmProviderConfig");
 const defineCrmEmailDomain = require("./CrmEmailDomain");
 const defineCrmEmailDomainRoute = require("./CrmEmailDomainRoute");
+const defineCrmSenderWarmupProfile = require("./CrmSenderWarmupProfile");
+const defineCrmSenderWarmupEvent = require("./CrmSenderWarmupEvent");
 const defineCrmEmailReplyForwardSettings = require("./CrmEmailReplyForwardSettings");
 const defineCrmMarketingFolder = require("./CrmMarketingFolder");
 const defineCrmMarketingTemplate = require("./CrmMarketingTemplate");
@@ -50,6 +52,8 @@ function getModels() {
   const CrmProviderConfig = defineCrmProviderConfig(sequelize);
   const CrmEmailDomain = defineCrmEmailDomain(sequelize);
   const CrmEmailDomainRoute = defineCrmEmailDomainRoute(sequelize);
+  const CrmSenderWarmupProfile = defineCrmSenderWarmupProfile(sequelize);
+  const CrmSenderWarmupEvent = defineCrmSenderWarmupEvent(sequelize);
   const CrmEmailReplyForwardSettings = defineCrmEmailReplyForwardSettings(sequelize);
   const CrmMarketingFolder = defineCrmMarketingFolder(sequelize);
   const CrmMarketingTemplate = defineCrmMarketingTemplate(sequelize);
@@ -139,9 +143,39 @@ function getModels() {
     as: "routes",
   });
 
+  CrmProviderConfig.hasMany(CrmEmailDomain, {
+    foreignKey: "providerConfigId",
+    as: "domains",
+  });
+
+  CrmEmailDomain.belongsTo(CrmProviderConfig, {
+    foreignKey: "providerConfigId",
+    as: "providerConfig",
+  });
+
   CrmEmailDomainRoute.belongsTo(CrmEmailDomain, {
     foreignKey: "domainId",
     as: "domain",
+  });
+
+  CrmEmailDomain.hasOne(CrmSenderWarmupProfile, {
+    foreignKey: "domainId",
+    as: "warmupProfile",
+  });
+
+  CrmSenderWarmupProfile.belongsTo(CrmEmailDomain, {
+    foreignKey: "domainId",
+    as: "domain",
+  });
+
+  CrmSenderWarmupProfile.hasMany(CrmSenderWarmupEvent, {
+    foreignKey: "warmupProfileId",
+    as: "events",
+  });
+
+  CrmSenderWarmupEvent.belongsTo(CrmSenderWarmupProfile, {
+    foreignKey: "warmupProfileId",
+    as: "profile",
   });
 
   models = {
@@ -152,6 +186,8 @@ function getModels() {
     CrmProviderConfig,
     CrmEmailDomain,
     CrmEmailDomainRoute,
+    CrmSenderWarmupProfile,
+    CrmSenderWarmupEvent,
     CrmEmailReplyForwardSettings,
     CrmMarketingFolder,
     CrmMarketingTemplate,

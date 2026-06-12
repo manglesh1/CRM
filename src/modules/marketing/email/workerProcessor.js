@@ -2,6 +2,7 @@ const repository = require("./messageRepository");
 const dispatcher = require("./messageDispatcher");
 const rateLimiter = require("./sendRateLimiter");
 const suppressionService = require("./suppressionService");
+const warmupService = require("../../messaging-core/warmup/senderWarmupService");
 
 const TERMINAL_STATUSES = ["sent", "delivered", "bounced", "complained", "unsubscribed", "cancelled"];
 
@@ -82,6 +83,19 @@ async function processMarketingSqsMessage(sqsMessage) {
   }
 
   await rateLimiter.assertCanSend(message, { queueType: body.queueType || null });
+  const warmupReservation = await warmupService.reserveForMessage({
+    message,
+    useCase: "marketing",
+    recipient: message.recipient,
+  });
+  if (warmupReservation?.warmup) {
+    await message.update({
+      metadata: {
+        ...(message.metadata || {}),
+        warmup: warmupReservation.warmup,
+      },
+    });
+  }
 
   try {
     await repository.markSending(message);

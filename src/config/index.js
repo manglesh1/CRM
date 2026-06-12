@@ -28,6 +28,14 @@ function booleanEnv(key, fallback = false) {
   return fallback;
 }
 
+function awsRegionEnv(key, fallback) {
+  const value = String(process.env[key] || fallback || "").trim();
+  if (!/^[a-z]{2}(?:-gov)?-[a-z]+-\d+$/.test(value)) {
+    throw new Error(`${key} must be a valid AWS region like us-east-1 or ca-central-1. Current value: ${value || "missing"}`);
+  }
+  return value;
+}
+
 const config = {
   env: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 4100),
@@ -49,7 +57,7 @@ const config = {
     coreApiBaseUrl: (process.env.MOVIRA_CORE_API_BASE_URL || "http://127.0.0.1:5171/api").replace(/\/+$/, ""),
   },
   aws: {
-    region: process.env.AWS_REGION || "us-east-1",
+    region: awsRegionEnv("AWS_REGION", "us-east-1"),
     queues: {
       transactionalCritical: process.env.SQS_TRANSACTIONAL_CRITICAL_URL || "",
       transactionalCriticalDlq: process.env.SQS_TRANSACTIONAL_CRITICAL_DLQ_URL || "",
@@ -60,10 +68,11 @@ const config = {
       webhookEvents: process.env.SQS_WEBHOOK_EVENTS_URL || "",
     },
     ses: {
-      region: process.env.AWS_SES_REGION || "us-east-1",
+      region: awsRegionEnv("AWS_SES_REGION", "us-east-1"),
       transactionalConfigSet: process.env.SES_TRANSACTIONAL_CONFIG_SET || "movira-transactional",
       marketingConfigSet: process.env.SES_MARKETING_CONFIG_SET || "movira-marketing",
       defaultFrom: process.env.SES_DEFAULT_FROM || "no-reply@movira.app",
+      domainProvisioningEnabled: booleanEnv("SES_DOMAIN_PROVISIONING_ENABLED", true),
     },
     s3: {
       marketingAssetsBucket: process.env.S3_MARKETING_ASSETS_BUCKET || "",
@@ -71,17 +80,6 @@ const config = {
       publicBaseUrl: process.env.S3_MARKETING_ASSETS_PUBLIC_BASE_URL || "",
       contactExportsBucket: process.env.S3_CONTACT_EXPORTS_BUCKET || "",
       contactExportsPrefix: process.env.S3_CONTACT_EXPORTS_PREFIX || "contact-exports",
-    },
-  },
-  email: {
-    provider: (process.env.EMAIL_PROVIDER || "ses").toLowerCase(),
-    smtp: {
-      host: process.env.SMTP_HOST || "smtp.gmail.com",
-      port: Number(process.env.SMTP_PORT || 465),
-      secure: String(process.env.SMTP_SECURE || "true").toLowerCase() !== "false",
-      user: process.env.SMTP_USER || "",
-      pass: process.env.SMTP_PASS || "",
-      from: process.env.EMAIL_FROM || "",
     },
   },
   marketing: {

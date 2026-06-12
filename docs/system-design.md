@@ -416,9 +416,10 @@ Default:
   Movira SES
 
 Optional customer-owned providers:
-  Customer SMTP
   Customer Amazon SES
   Customer SendGrid
+  Customer Mailgun
+  Customer Postmark
 ```
 
 ## 7. Transactional Flow

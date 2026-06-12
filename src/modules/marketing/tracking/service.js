@@ -2,6 +2,7 @@ const { getModels } = require("../../../db/models");
 const suppressionService = require("../email/suppressionService");
 const messageDispatcher = require("../email/messageDispatcher");
 const queueJobs = require("../../queueJobs/service");
+const warmupService = require("../../messaging-core/warmup/senderWarmupService");
 
 const EVENT_TO_STATUS = {
   queued: { status: "queued", field: "queuedAt" },
@@ -54,6 +55,9 @@ async function recordMarketingEvent(messageId, eventType, payload = {}) {
   });
 
   if (Object.keys(update).length) await message.update(update);
+  if (isFirstOccurrence) {
+    await warmupService.recordMessageResult(message, eventType);
+  }
 
   if (["bounce", "complaint", "unsubscribe"].includes(eventType)) {
     await suppressionService.suppressEmail({

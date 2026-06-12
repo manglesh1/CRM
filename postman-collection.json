@@ -351,7 +351,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"locationId\": {{locationId}},\n  \"domain\": \"marketing\",\n  \"provider\": \"customer_smtp\",\n  \"displayName\": \"Customer SMTP\",\n  \"config\": {\n    \"host\": \"smtp.example.com\",\n    \"port\": \"587\",\n    \"username\": \"user\",\n    \"password\": \"secret\",\n    \"fromEmail\": \"hello@example.com\"\n  }\n}"
+              "raw": "{\n  \"locationId\": {{locationId}},\n  \"domain\": \"marketing\",\n  \"provider\": \"customer_sendgrid\",\n  \"displayName\": \"Customer SendGrid\",\n  \"config\": {\n    \"apiKey\": \"SG.example\",\n    \"fromEmail\": \"hello@example.com\"\n  }\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/settings/email/providers",
@@ -366,7 +366,7 @@
               "status": "Created",
               "code": 201,
               "_postman_previewlanguage": "json",
-              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"provider\": \"customer_smtp\",\n    \"displayName\": \"Customer SMTP\",\n    \"config\": { \"password\": \"********\" }\n  }\n}"
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"provider\": \"customer_sendgrid\",\n    \"displayName\": \"Customer SendGrid\",\n    \"config\": { \"apiKey\": \"********\" }\n  }\n}"
             }
           ]
         }

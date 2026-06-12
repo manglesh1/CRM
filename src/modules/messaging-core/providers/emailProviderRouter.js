@@ -1,10 +1,10 @@
-const nodemailer = require("nodemailer");
 const { SESv2Client, SendEmailCommand } = require("@aws-sdk/client-sesv2");
 const MailComposer = require("nodemailer/lib/mail-composer");
 const { Op } = require("sequelize");
 const { getModels } = require("../../../db/models");
 const config = require("../../../config");
 const moviraSesProvider = require("./sesEmailProvider");
+const domainSenderResolver = require("./domainSenderResolver");
 
 function providerUseCase(kind) {
   return kind === "transactional" ? "transactional" : "marketing";
@@ -36,20 +36,34 @@ async function sendMarketingEmail(input = {}) {
 
 async function sendEmail(input = {}) {
   const useCase = providerUseCase(input.useCase);
-  const providerRow = await findProvider({ locationId: input.locationId, useCase });
+  const sender = await domainSenderResolver.resolveSender({ locationId: input.locationId, useCase });
+  const resolvedInput = sender ? { ...input, from: sender.from } : input;
+  const providerRow = sender?.providerConfigId
+    ? await findProviderById(sender.providerConfigId)
+    : await findProvider({ locationId: input.locationId, useCase });
   if (!providerRow || providerRow.provider === "movira_ses") {
-    return useCase === "transactional"
-      ? moviraSesProvider.sendTransactionalEmail(input)
-      : moviraSesProvider.sendMarketingEmail(input);
+    const result = useCase === "transactional"
+      ? moviraSesProvider.sendTransactionalEmail(resolvedInput)
+      : moviraSesProvider.sendMarketingEmail(resolvedInput);
+    return enrichResult(await result, providerRow, sender);
   }
-  return sendWithProviderRow(providerRow, input, useCase);
+  return enrichResult(await sendWithProviderRow(providerRow, resolvedInput, useCase), providerRow, sender);
+}
+
+async function findProviderById(id) {
+  const { CrmProviderConfig } = getModels();
+  if (!id) return null;
+  return CrmProviderConfig.findOne({
+    where: {
+      id,
+      channel: "email",
+      isActive: true,
+    },
+  });
 }
 
 async function sendWithProviderRow(providerRow, input = {}, useCase = providerUseCase(providerRow?.domain)) {
   const cfg = providerRow.encryptedConfig || {};
-  if (providerRow.provider === "customer_smtp") {
-    return sendSmtp(providerRow, cfg, input);
-  }
   if (providerRow.provider === "customer_ses") {
     return sendCustomerSes(providerRow, cfg, input, useCase);
   }
@@ -68,26 +82,12 @@ async function sendWithProviderRow(providerRow, input = {}, useCase = providerUs
     : moviraSesProvider.sendMarketingEmail(input);
 }
 
-async function sendSmtp(providerRow, cfg, input) {
-  const port = Number(cfg.port);
-  const transporter = nodemailer.createTransport({
-    host: cfg.host,
-    port,
-    secure: port === 465,
-    auth: { user: cfg.username, pass: cfg.password },
-  });
-  const result = await transporter.sendMail({
-    from: input.from || cfg.fromEmail || config.aws.ses.defaultFrom,
-    to: input.to,
-    subject: input.subject || "",
-    html: input.html || input.text || "",
-    text: input.text || stripHtml(input.html || ""),
-    attachments: input.attachments || [],
-  });
+function enrichResult(result = {}, providerRow, sender) {
   return {
-    provider: providerRow.provider,
-    providerConfigId: providerRow.id,
-    providerMessageId: result.messageId || null,
+    ...result,
+    providerConfigId: result.providerConfigId || providerRow?.id || sender?.providerConfigId || null,
+    senderDomainId: sender?.domainId || null,
+    senderDomain: sender?.domain || null,
   };
 }
 

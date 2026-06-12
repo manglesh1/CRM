@@ -17,23 +17,6 @@ const PROVIDER_OPTIONS = [
     fields: [],
   },
   {
-    provider: "customer_smtp",
-    label: "Customer SMTP",
-    mode: "bring_your_own",
-    description: "Fallback sending only. Movira can track opens/clicks, but delivery, bounce, and complaint stats require provider-specific webhooks.",
-    supports: ["transactional", "marketing"],
-    capabilities: {
-      sending: true,
-      openClickTracking: true,
-      deliveryWebhook: false,
-      bounceWebhook: false,
-      complaintWebhook: false,
-      notes: "SMTP does not reliably expose delivery, bounce, or complaint events. Use SES, SendGrid, Mailgun, or Postmark for full analytics.",
-    },
-    requiresCustomerCredentials: true,
-    fields: ["host", "port", "username", "password", "fromEmail"],
-  },
-  {
     provider: "customer_ses",
     label: "Customer Amazon SES",
     mode: "bring_your_own",

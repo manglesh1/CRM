@@ -2,6 +2,7 @@ const repository = require("./repository");
 const dispatcher = require("./dispatcher");
 const { DELIVERY_EVENT, STATUS } = require("./constants");
 const suppressionService = require("../marketing/email/suppressionService");
+const warmupService = require("../messaging-core/warmup/senderWarmupService");
 
 async function processTransactionalSqsMessage(sqsMessage) {
   const body = parseBody(sqsMessage.Body);
@@ -27,6 +28,22 @@ async function processTransactionalSqsMessage(sqsMessage) {
     if (suppression) {
       await repository.markSuppressed(message, suppression);
       return { skipped: true, reason: "recipient_suppressed", messageId: message.id };
+    }
+  }
+
+  if (message.channel === "email") {
+    const warmupReservation = await warmupService.reserveForMessage({
+      message,
+      useCase: "transactional",
+      recipient: message.recipientAddress,
+    });
+    if (warmupReservation?.warmup) {
+      await message.update({
+        payload: {
+          ...(message.payload || {}),
+          _warmup: warmupReservation.warmup,
+        },
+      });
     }
   }
 

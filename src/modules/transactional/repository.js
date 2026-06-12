@@ -60,13 +60,21 @@ async function markSending(message) {
   });
 }
 
-async function markSent(message, { provider, providerMessageId }) {
+async function markSent(message, { provider, providerMessageId, providerConfigId = null, senderDomainId = null, senderDomain = null }) {
   return message.update({
     status: STATUS.SENT,
     provider,
     providerMessageId,
     sentAt: new Date(),
     lastError: null,
+    payload: {
+      ...(message.payload || {}),
+      _sender: {
+        providerConfigId,
+        senderDomainId,
+        senderDomain,
+      },
+    },
   });
 }
 

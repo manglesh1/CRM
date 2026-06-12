@@ -1,6 +1,5 @@
 const assert = require("node:assert/strict");
 const { afterEach, mock, test } = require("node:test");
-const nodemailer = require("nodemailer");
 const { SESv2Client } = require("@aws-sdk/client-sesv2");
 const { sendWithProviderRow } = require("../src/modules/messaging-core/providers/emailProviderRouter");
 const providerEventsService = require("../src/modules/webhooks/providerEventsService");
@@ -33,36 +32,6 @@ const emailInput = {
     { name: "location_id", value: "15" },
   ],
 };
-
-test("SMTP provider sends through nodemailer and returns provider message id", async () => {
-  let transportOptions = null;
-  let sentMail = null;
-  mock.method(nodemailer, "createTransport", (options) => {
-    transportOptions = options;
-    return {
-      sendMail: async (payload) => {
-        sentMail = payload;
-        return { messageId: "smtp-message-id" };
-      },
-    };
-  });
-
-  const result = await sendWithProviderRow(providerRow("customer_smtp", {
-    host: "smtp.example.test",
-    port: 587,
-    username: "user",
-    password: "pass",
-    fromEmail: "fallback@example.test",
-  }), emailInput, "transactional");
-
-  assert.equal(result.provider, "customer_smtp");
-  assert.equal(result.providerMessageId, "smtp-message-id");
-  assert.deepEqual(transportOptions.auth, { user: "user", pass: "pass" });
-  assert.equal(transportOptions.secure, false);
-  assert.equal(sentMail.from, "sender@example.test");
-  assert.equal(sentMail.to, "guest@example.test");
-  assert.equal(sentMail.subject, "Order confirmed");
-});
 
 test("customer SES provider sends transactional metadata tags", async () => {
   let commandInput = null;

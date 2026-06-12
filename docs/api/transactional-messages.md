@@ -209,7 +209,7 @@ Mailgun  -> POST /api/webhooks/mailgun
 Postmark -> POST /api/webhooks/postmark
 ```
 
-Movira adds provider metadata when sending (`domain` and `message_id`) so those webhooks can update the right transactional or marketing message. SMTP-only providers can send mail and use Movira open/click tracking, but SMTP does not reliably provide delivery, bounce, or complaint callbacks.
+Movira adds provider metadata when sending (`domain` and `message_id`) so those webhooks can update the right transactional or marketing message. Customer-owned providers must use API/webhook-capable integrations such as SES, SendGrid, Mailgun, or Postmark.
 
 When AWS SES bounces/delivers/etc., it publishes to SNS. SNS sends the notification to the webhook-events SQS queue. The webhook worker reads that queue and calls the same SES handler. The handler:
 

@@ -4,6 +4,8 @@ const { PROVIDER_OPTIONS } = require("./providerCatalog");
 const { verifyDomainRecords } = require("../../../shared/emailDnsVerifier");
 const { UNVERIFIED_TTL_DAYS } = require("../../../workers/unverifiedDomainCleaner");
 const emailProvider = require("../../messaging-core/providers/emailProviderRouter");
+const providerDomain = require("./providerDomainService");
+const warmupService = require("../../messaging-core/warmup/senderWarmupService");
 
 const ROUTE_DEFINITIONS = [
   { routeKey: "calendar", label: "Calendar Domain" },
@@ -18,7 +20,7 @@ const ROUTE_DEFINITIONS = [
 ];
 
 async function getEmailSettings({ locationId }) {
-  const { CrmProviderConfig, CrmEmailDomain, CrmEmailDomainRoute } = getModels();
+  const { CrmProviderConfig, CrmEmailDomain, CrmEmailDomainRoute, CrmSenderWarmupProfile } = getModels();
   const scopedWhere = locationId ? { locationId: Number(locationId) } : {};
   const providers = await CrmProviderConfig.findAll({
     where: {
@@ -31,6 +33,7 @@ async function getEmailSettings({ locationId }) {
   const domains = locationId
     ? await CrmEmailDomain.findAll({
         where: { locationId: Number(locationId) },
+        include: [{ model: CrmSenderWarmupProfile, as: "warmupProfile", required: false }],
         order: [["createdAt", "DESC"]],
       })
     : [];
@@ -46,7 +49,7 @@ async function getEmailSettings({ locationId }) {
       { key: "default_provider", label: "Use Movira SES", status: "ready" },
       { key: "sending_domain", label: "Add a dedicated sending domain", status: domains.length ? "started" : "not_started" },
       { key: "dns_verification", label: "Verify DNS records", status: domains.some((d) => d.status === "verified") ? "verified" : "pending" },
-      { key: "optional_provider", label: "Connect customer SES/SendGrid or SMTP fallback", status: providers.length ? "configured" : "optional" },
+      { key: "optional_provider", label: "Connect customer SES, SendGrid, Mailgun, or Postmark", status: providers.length ? "configured" : "optional" },
     ],
     defaultProvider: PROVIDER_OPTIONS[0],
     providerOptions: PROVIDER_OPTIONS,
@@ -99,7 +102,7 @@ async function ensureDomainRoutes({ model, locationId }) {
 }
 
 async function createDomain(body = {}) {
-  const { CrmEmailDomain } = getModels();
+  const { CrmEmailDomain, CrmProviderConfig } = getModels();
   const domain = normalizeDomain(body.domain);
   const errors = validateDomainBody({ ...body, domain });
   if (errors.length) throwValidation(errors);
@@ -113,16 +116,40 @@ async function createDomain(body = {}) {
     throw err;
   }
 
+  const provider = String(body.provider || "movira_ses").trim();
+  const providerConfigId = body.providerConfigId || null;
+  const providerConfig = await resolveProviderConfig({
+    model: CrmProviderConfig,
+    locationId: Number(body.locationId),
+    provider,
+    providerConfigId,
+    useCase: body.useCase || "marketing",
+  });
+
+  let identity;
+  try {
+    identity = await providerDomain.createDomainIdentity({ provider, providerConfig, domain });
+  } catch (err) {
+    const wrapped = new Error(`Domain setup failed: ${err?.message || "unknown error"}`);
+    wrapped.statusCode = err?.statusCode || 502;
+    throw wrapped;
+  }
+
   const row = await CrmEmailDomain.create({
     locationId: Number(body.locationId),
     domain,
     domainType: body.domainType || "subdomain",
     useCase: body.useCase || "marketing",
-    provider: "movira_ses",
+    provider,
+    providerConfigId: providerConfig?.id || null,
     status: "pending_dns",
-    dnsRecords: buildDnsRecords(domain),
+    dnsRecords: identity.dnsRecords,
     senderName: body.senderName || null,
     senderEmail: body.senderEmail || null,
+    providerIdentityName: identity.providerIdentityName || domain,
+    providerIdentityArn: identity.providerIdentityArn || null,
+    mailFromDomain: identity.mailFromDomain || null,
+    lastVerificationError: null,
     isDefault: false,
     isActive: true,
   });
@@ -131,7 +158,7 @@ async function createDomain(body = {}) {
 }
 
 async function listDomains({ locationId } = {}) {
-  const { CrmEmailDomain } = getModels();
+  const { CrmEmailDomain, CrmSenderWarmupProfile } = getModels();
   if (!locationId) {
     const err = new Error("locationId is required");
     err.statusCode = 400;
@@ -139,14 +166,17 @@ async function listDomains({ locationId } = {}) {
   }
   const rows = await CrmEmailDomain.findAll({
     where: { locationId: Number(locationId) },
+    include: [{ model: CrmSenderWarmupProfile, as: "warmupProfile", required: false }],
     order: [["isDefault", "DESC"], ["createdAt", "DESC"]],
   });
   return rows.map(serializeDomain);
 }
 
 async function getDomain(id) {
-  const { CrmEmailDomain } = getModels();
-  const row = await CrmEmailDomain.findByPk(id);
+  const { CrmEmailDomain, CrmSenderWarmupProfile } = getModels();
+  const row = await CrmEmailDomain.findByPk(id, {
+    include: [{ model: CrmSenderWarmupProfile, as: "warmupProfile", required: false }],
+  });
   if (!row) {
     const err = new Error("Domain not found");
     err.statusCode = 404;
@@ -156,7 +186,7 @@ async function getDomain(id) {
 }
 
 async function deleteDomain(id) {
-  const { CrmEmailDomain, CrmEmailDomainRoute } = getModels();
+  const { CrmEmailDomain, CrmEmailDomainRoute, CrmProviderConfig } = getModels();
   const row = await CrmEmailDomain.findByPk(id);
   if (!row) {
     const err = new Error("Domain not found");
@@ -169,6 +199,18 @@ async function deleteDomain(id) {
     { domainId: null },
     { where: { domainId: row.id } }
   );
+  try {
+    const providerConfig = row.providerConfigId ? await CrmProviderConfig.findByPk(row.providerConfigId) : null;
+    await providerDomain.deleteDomainIdentity({
+      provider: row.provider,
+      providerConfig,
+      domain: row.domain,
+      identityName: row.providerIdentityName,
+    });
+  } catch (err) {
+    row.lastVerificationError = `SES identity delete failed: ${err?.message || "unknown error"}`;
+    await row.save();
+  }
   await row.destroy();
   return true;
 }
@@ -180,6 +222,9 @@ async function setDefaultDomain(id) {
     const err = new Error("Domain not found");
     err.statusCode = 404;
     throw err;
+  }
+  if (row.status !== "verified") {
+    throwValidation([{ field: "domainId", message: "Verify this domain before setting it as default." }]);
   }
   await CrmEmailDomain.update(
     { isDefault: false },
@@ -204,22 +249,49 @@ async function listDomainRoutes({ locationId } = {}) {
 }
 
 async function verifyDomain(id) {
-  const { CrmEmailDomain } = getModels();
+  const { CrmEmailDomain, CrmProviderConfig, CrmSenderWarmupProfile } = getModels();
   const row = await CrmEmailDomain.findByPk(id);
   if (!row) {
     const err = new Error("Domain not found");
     err.statusCode = 404;
     throw err;
   }
-  const seedRecords = row.dnsRecords?.length ? row.dnsRecords : buildDnsRecords(row.domain);
+  const providerConfig = row.providerConfigId ? await CrmProviderConfig.findByPk(row.providerConfigId) : null;
+  let identity;
+  try {
+    identity = await providerDomain.refreshDomainIdentity({
+      provider: row.provider,
+      providerConfig,
+      domain: row.domain,
+      identityName: row.providerIdentityName,
+    });
+  } catch (err) {
+    const wrapped = new Error(`Domain verification lookup failed: ${err?.message || "unknown error"}`);
+    wrapped.statusCode = err?.statusCode || 502;
+    throw wrapped;
+  }
+
+  const seedRecords = identity.dnsRecords || [];
   const { records: checked, allOk } = await verifyDomainRecords(seedRecords, row.domain);
-  const newStatus = allOk ? "verified" : "verification_requested";
+  const providerOk = Boolean(identity.providerVerified);
+  const newStatus = allOk && providerOk ? "verified" : "verification_requested";
   await row.update({
     status: newStatus,
-    verifiedAt: allOk ? new Date() : null,
+    verifiedAt: newStatus === "verified" ? new Date() : null,
     dnsRecords: checked,
+    providerIdentityName: identity?.providerIdentityName || row.providerIdentityName || row.domain,
+    providerIdentityArn: identity?.providerIdentityArn || row.providerIdentityArn || null,
+    mailFromDomain: identity?.mailFromDomain || row.mailFromDomain || null,
+    lastDnsCheckedAt: new Date(),
+    lastVerificationError: newStatus === "verified" ? null : "DNS records are still pending or SES has not marked the identity ready.",
   });
-  return serializeDomain(row);
+  if (newStatus === "verified") {
+    await warmupService.ensureProfileForDomain(await CrmEmailDomain.findByPk(row.id));
+  }
+  const fresh = await CrmEmailDomain.findByPk(row.id, {
+    include: [{ model: CrmSenderWarmupProfile, as: "warmupProfile", required: false }],
+  });
+  return serializeDomain(fresh || row);
 }
 
 // Verify customer-supplied credentials BEFORE saving the provider row.
@@ -244,9 +316,6 @@ async function verifyProviderConfig({ provider, config = {} } = {}) {
     );
   }
 
-  if (provider === "customer_smtp") {
-    return verifySmtp(config);
-  }
   if (provider === "customer_ses") {
     return verifyCustomerSes(config);
   }
@@ -262,36 +331,8 @@ async function verifyProviderConfig({ provider, config = {} } = {}) {
   return { ok: false, message: "Verification not implemented for this provider." };
 }
 
-async function verifySmtp(config) {
-  let nodemailer;
-  try {
-    nodemailer = require("nodemailer");
-  } catch (_e) {
-    return { ok: false, message: "SMTP verification requires the nodemailer package." };
-  }
-  const port = Number(config.port);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throwValidation([{ field: "config.port", message: "SMTP port must be 1–65535." }]);
-  }
-  const transporter = nodemailer.createTransport({
-    host: config.host,
-    port,
-    secure: port === 465,
-    auth: { user: config.username, pass: config.password },
-    connectionTimeout: 8000,
-    greetingTimeout: 8000,
-    socketTimeout: 8000,
-  });
-  try {
-    await transporter.verify();
-    return { ok: true, message: `Connected to ${config.host}:${port} and authenticated.` };
-  } catch (err) {
-    const reason = err?.response || err?.message || "Connection failed";
-    return { ok: false, message: `SMTP verify failed: ${reason}` };
-  }
-}
-
 async function verifyCustomerSes(config) {
+  validateAwsRegion(config.region, "SES region");
   let SESv2Client;
   let GetAccountCommand;
   try {
@@ -397,6 +438,14 @@ function mailgunApiBase(region) {
     : "https://api.mailgun.net";
 }
 
+function validateAwsRegion(region, label = "AWS region") {
+  const value = String(region || "").trim();
+  if (!/^[a-z]{2}(?:-gov)?-[a-z]+-\d+$/.test(value)) {
+    throwValidation([{ field: "config.region", message: `${label} must be a valid AWS region like us-east-1 or ca-central-1.` }]);
+  }
+  return value;
+}
+
 function humanizeFieldKey(key) {
   return String(key)
     .replace(/([A-Z])/g, " $1")
@@ -465,6 +514,9 @@ async function updateDomainRoute(id, body = {}) {
     const domain = await CrmEmailDomain.findByPk(body.domainId);
     if (!domain || Number(domain.locationId) !== Number(row.locationId)) {
       throwValidation([{ field: "domainId", message: "Choose a valid domain for this location." }]);
+    }
+    if (domain.status !== "verified") {
+      throwValidation([{ field: "domainId", message: "Only verified domains can be used for routing." }]);
     }
   }
 
@@ -547,25 +599,36 @@ function serializeProvider(row) {
 }
 
 function serializeDomain(row) {
-  // Synthesize warmup state + sender header from row age until workers
-  // start updating these counters in real time.
-  const stages = [
-    { stage: 1, limit: 50 },
-    { stage: 2, limit: 200 },
-    { stage: 3, limit: 500 },
-    { stage: 4, limit: 1000 },
-    { stage: 5, limit: 3000 },
-    { stage: 6, limit: 8000 },
-    { stage: 7, limit: 10000 },
-  ];
-  const ageDays = Math.max(
-    0,
-    Math.floor((Date.now() - new Date(row.createdAt).getTime()) / 86400000)
-  );
-  const idx = Math.min(stages.length - 1, Math.floor(ageDays / 3));
-  const warmup = stages[idx];
-
   const localPart = String(row.domain || "").split(".")[0] || "events";
+  const profile = row.warmupProfile || null;
+  const todayLimit = Number(profile?.dailyLimit || 0);
+  const todaySent = Number(profile?.todaySent || 0);
+  const warmup = profile
+    ? {
+        id: profile.id,
+        status: profile.status,
+        stage: profile.stage,
+        dailyLimit: profile.dailyLimit,
+        hourlyLimit: profile.hourlyLimit,
+        todaySent: profile.todaySent,
+        todayLimit: profile.dailyLimit,
+        currentHourSent: profile.currentHourSent,
+        hourLimit: profile.hourlyLimit,
+        todayDelivered: profile.todayDelivered,
+        todayBounced: profile.todayBounced,
+        todayComplaints: profile.todayComplaints,
+        todayUnsubscribed: profile.todayUnsubscribed,
+        todayOpened: profile.todayOpened,
+        todayClicked: profile.todayClicked,
+        pct: todayLimit ? Math.min(100, Math.round((todaySent / todayLimit) * 100)) : 0,
+        pausedReason: profile.pausedReason,
+        windowStartedAt: profile.windowStartedAt,
+        hourWindowStartedAt: profile.hourWindowStartedAt,
+        startedAt: profile.startedAt,
+        completedAt: profile.completedAt,
+        lastEvaluatedAt: profile.lastEvaluatedAt,
+      }
+    : null;
   // Unverified domains auto-expire UNVERIFIED_TTL_DAYS after creation —
   // surface the deadline so the UI can warn customers in red.
   const expiresAt =
@@ -579,15 +642,22 @@ function serializeDomain(row) {
     domainType: row.domainType,
     useCase: row.useCase,
     provider: row.provider,
+    providerConfigId: row.providerConfigId,
     status: row.status,
     dnsRecords: row.dnsRecords || [],
     senderName: row.senderName,
     senderEmail: row.senderEmail || (row.domain ? `${localPart}@${row.domain}` : null),
+    providerIdentityName: row.providerIdentityName,
+    providerIdentityArn: row.providerIdentityArn,
+    mailFromDomain: row.mailFromDomain,
+    lastDnsCheckedAt: row.lastDnsCheckedAt,
+    lastVerificationError: row.lastVerificationError,
     isDefault: row.isDefault,
     isActive: row.isActive,
-    warmupStage: row.warmupStage || warmup.stage,
-    warmupTodaySent: row.warmupTodaySent || 0,
-    warmupTodayLimit: row.warmupTodayLimit || warmup.limit,
+    warmup,
+    warmupStage: warmup?.stage || row.warmupStage || null,
+    warmupTodaySent: warmup?.todaySent || row.warmupTodaySent || 0,
+    warmupTodayLimit: warmup?.todayLimit || row.warmupTodayLimit || 0,
     verifiedAt: row.verifiedAt,
     expiresAt,
     createdAt: row.createdAt,
@@ -651,16 +721,6 @@ function validateProviderBody(body, option) {
     }
   }
 
-  if (provider === "customer_smtp") {
-    const port = Number(config.port);
-    if (config.port && (!Number.isInteger(port) || port < 1 || port > 65535)) {
-      errors.push({
-        field: "config.port",
-        message: "SMTP port must be a valid number between 1 and 65535.",
-      });
-    }
-  }
-
   if (provider === "customer_mailgun") {
     const region = String(config.region || "").toLowerCase();
     if (!["us", "eu"].includes(region)) {
@@ -703,7 +763,37 @@ function validateDomainBody(body) {
       message: "Choose Transactional, Marketing, or Both.",
     });
   }
+  if (body.provider && !PROVIDER_OPTIONS.some((item) => item.provider === body.provider)) {
+    errors.push({ field: "provider", message: "Choose a valid email provider." });
+  }
   return errors;
+}
+
+async function resolveProviderConfig({ model, locationId, provider, providerConfigId, useCase }) {
+  const option = PROVIDER_OPTIONS.find((item) => item.provider === provider);
+  if (!option) throwValidation([{ field: "provider", message: "Choose a valid email provider." }]);
+  if (useCase !== "both" && !option.supports.includes(useCase)) {
+    throwValidation([{ field: "provider", message: "This provider does not support the selected use case." }]);
+  }
+  if (provider === "movira_ses") return null;
+  if (!providerConfigId) {
+    throwValidation([{ field: "providerConfigId", message: "Choose a connected provider before adding this domain." }]);
+  }
+
+  const row = await model.findByPk(providerConfigId);
+  if (
+    !row ||
+    Number(row.locationId) !== Number(locationId) ||
+    row.provider !== provider ||
+    row.channel !== "email" ||
+    !row.isActive
+  ) {
+    throwValidation([{ field: "providerConfigId", message: "Choose a valid active provider for this location." }]);
+  }
+  if (useCase !== "both" && ![useCase, "both"].includes(row.domain)) {
+    throwValidation([{ field: "providerConfigId", message: "Provider route does not match the selected domain use case." }]);
+  }
+  return row;
 }
 
 function normalizeDomain(value) {
@@ -729,47 +819,6 @@ function toLabel(key) {
   return String(key)
     .replace(/([A-Z])/g, " $1")
     .replace(/^./, (c) => c.toUpperCase());
-}
-
-function buildDnsRecords(domain) {
-  const safe = String(domain || "").replace(/[^a-z0-9]/g, "");
-  return [
-    {
-      type: "TXT",
-      host: "@",
-      value: "v=spf1 include:amazonses.com ~all",
-      purpose: "SPF — authorises Movira SES to send for this domain",
-      status: "pending",
-    },
-    {
-      type: "TXT",
-      host: `movira._domainkey.${domain}`,
-      value: `k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDKKK_PLACEHOLDER_${safe}_DKIM_PUBLIC_KEY`,
-      purpose: "DKIM — message body signature",
-      status: "pending",
-    },
-    {
-      type: "CNAME",
-      host: `email.${domain}`,
-      value: "feedback-smtp.us-east-1.amazonses.com",
-      purpose: "Return-path / bounce reporting",
-      status: "pending",
-    },
-    {
-      type: "TXT",
-      host: `_dmarc.${domain}`,
-      value: "v=DMARC1; p=none; rua=mailto:dmarc@movira.app",
-      purpose: "DMARC alignment policy",
-      status: "pending",
-    },
-    {
-      type: "MX",
-      host: domain,
-      value: "10 feedback-smtp.us-east-1.amazonses.com",
-      purpose: "MX — required for inbound bounce/complaint feedback",
-      status: "pending",
-    },
-  ];
 }
 
 module.exports = {

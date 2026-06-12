@@ -41,7 +41,7 @@ Sub-tabs inside:
 
 ### Providers
 
-- Add SES / SMTP / SendGrid credentials
+- Add SES / SendGrid / Mailgun / Postmark credentials
 - Test connectivity before save
 - Activate / deactivate / set priority
 - Mark as default for sending

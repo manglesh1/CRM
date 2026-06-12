@@ -1,6 +1,7 @@
 const { getModels } = require("../../db/models");
 const { DELIVERY_EVENT, STATUS } = require("./constants");
 const repository = require("./repository");
+const warmupService = require("../messaging-core/warmup/senderWarmupService");
 
 const SES_EVENT_TO_STATUS = {
   delivered: { status: STATUS.DELIVERED, field: "deliveredAt", deliveryEvent: DELIVERY_EVENT.DELIVERED },
@@ -65,6 +66,7 @@ async function recordTransactionalSesEvent({ eventType, providerMessageId, tagge
     }
     await message.update(update);
   }
+  await warmupService.recordMessageResult(message, eventType);
 
   return {
     matched: true,
@@ -135,6 +137,7 @@ async function recordTransactionalProviderEvent({ provider, eventType, providerM
     }
     await message.update(update);
   }
+  await warmupService.recordMessageResult(message, eventType);
 
   return {
     matched: true,
