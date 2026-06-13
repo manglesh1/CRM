@@ -267,17 +267,19 @@ router.post("/", async (req, res, next) => {
       {
         eventType: data.created ? "customer.created" : "contact.changed",
         contactId: data.contact?.id,
+        locationId: data.contact?.locationId,
         payload: { sourceType: data.contact?.sourceType },
       },
       ...(data.tagsAdded || []).map((tag) => ({
         eventType: "contact.tag_added",
         contactId: data.contact?.id,
+        locationId: data.contact?.locationId,
         tag,
         payload: { sourceType: data.contact?.sourceType },
       })),
     ]);
     data.automation = automation;
-    data.segmentRefresh = await queueSegmentRefresh(req, req.body.locationId || req.query.locationId, { source: data.created ? "contact_created" : "contact_upserted" });
+    data.segmentRefresh = await queueSegmentRefresh(req, data.contact?.locationId || req.body.locationId || req.query.locationId, { source: data.created ? "contact_created" : "contact_upserted" });
     res.status(data.created ? 201 : 200).json({ success: true, data });
   } catch (err) {
     if (err.statusCode) return sendError(res, err);
