@@ -1,8 +1,16 @@
 "use strict";
 
+function crmSchema() {
+  return process.env.CRM_DB_SCHEMA || "crm";
+}
+
+function tableName(tableName) {
+  return { tableName, schema: crmSchema() };
+}
+
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.createTable("crm_sender_warmup_profiles", {
+    await queryInterface.createTable(tableName("crm_sender_warmup_profiles"), {
       id: {
         type: Sequelize.UUID,
         defaultValue: Sequelize.literal("gen_random_uuid()"),
@@ -13,14 +21,14 @@ module.exports = {
       domainId: {
         type: Sequelize.UUID,
         allowNull: false,
-        references: { model: "crm_email_domains", key: "id" },
+        references: { model: tableName("crm_email_domains"), key: "id" },
         onDelete: "CASCADE",
       },
       provider: { type: Sequelize.STRING(50), allowNull: false },
       providerConfigId: {
         type: Sequelize.UUID,
         allowNull: true,
-        references: { model: "crm_provider_configs", key: "id" },
+        references: { model: tableName("crm_provider_configs"), key: "id" },
         onDelete: "SET NULL",
       },
       status: { type: Sequelize.STRING(30), allowNull: false, defaultValue: "active" },
@@ -51,15 +59,15 @@ module.exports = {
       updatedAt: { type: Sequelize.DATE, allowNull: false, defaultValue: Sequelize.literal("NOW()") },
     });
 
-    await queryInterface.addIndex("crm_sender_warmup_profiles", ["domainId"], {
+    await queryInterface.addIndex(tableName("crm_sender_warmup_profiles"), ["domainId"], {
       unique: true,
       name: "crm_sender_warmup_profiles_domain_unique",
     });
-    await queryInterface.addIndex("crm_sender_warmup_profiles", ["status", "lastEvaluatedAt"], {
+    await queryInterface.addIndex(tableName("crm_sender_warmup_profiles"), ["status", "lastEvaluatedAt"], {
       name: "crm_sender_warmup_profiles_eval_idx",
     });
 
-    await queryInterface.createTable("crm_sender_warmup_events", {
+    await queryInterface.createTable(tableName("crm_sender_warmup_events"), {
       id: {
         type: Sequelize.UUID,
         defaultValue: Sequelize.literal("gen_random_uuid()"),
@@ -69,13 +77,13 @@ module.exports = {
       warmupProfileId: {
         type: Sequelize.UUID,
         allowNull: false,
-        references: { model: "crm_sender_warmup_profiles", key: "id" },
+        references: { model: tableName("crm_sender_warmup_profiles"), key: "id" },
         onDelete: "CASCADE",
       },
       domainId: {
         type: Sequelize.UUID,
         allowNull: false,
-        references: { model: "crm_email_domains", key: "id" },
+        references: { model: tableName("crm_email_domains"), key: "id" },
         onDelete: "CASCADE",
       },
       eventType: { type: Sequelize.STRING(40), allowNull: false },
@@ -87,13 +95,13 @@ module.exports = {
       updatedAt: { type: Sequelize.DATE, allowNull: false, defaultValue: Sequelize.literal("NOW()") },
     });
 
-    await queryInterface.addIndex("crm_sender_warmup_events", ["warmupProfileId", "createdAt"], {
+    await queryInterface.addIndex(tableName("crm_sender_warmup_events"), ["warmupProfileId", "createdAt"], {
       name: "crm_sender_warmup_events_profile_created_idx",
     });
   },
 
   down: async (queryInterface) => {
-    await queryInterface.dropTable("crm_sender_warmup_events");
-    await queryInterface.dropTable("crm_sender_warmup_profiles");
+    await queryInterface.dropTable(tableName("crm_sender_warmup_events"));
+    await queryInterface.dropTable(tableName("crm_sender_warmup_profiles"));
   },
 };

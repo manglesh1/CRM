@@ -1,8 +1,16 @@
 "use strict";
 
+function crmSchema() {
+  return process.env.CRM_DB_SCHEMA || "crm";
+}
+
+function tableName(tableName) {
+  return { tableName, schema: crmSchema() };
+}
+
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.createTable("crm_email_domain_routes", {
+    await queryInterface.createTable(tableName("crm_email_domain_routes"), {
       id: {
         type: Sequelize.UUID,
         defaultValue: Sequelize.literal("gen_random_uuid()"),
@@ -25,7 +33,7 @@ module.exports = {
         type: Sequelize.UUID,
         allowNull: true,
         references: {
-          model: "crm_email_domains",
+          model: tableName("crm_email_domains"),
           key: "id",
         },
         onDelete: "SET NULL",
@@ -52,13 +60,13 @@ module.exports = {
       },
     });
 
-    await queryInterface.addIndex("crm_email_domain_routes", ["locationId", "routeKey"], {
+    await queryInterface.addIndex(tableName("crm_email_domain_routes"), ["locationId", "routeKey"], {
       unique: true,
       name: "crm_email_domain_routes_location_key_unique",
     });
   },
 
   down: async (queryInterface) => {
-    await queryInterface.dropTable("crm_email_domain_routes");
+    await queryInterface.dropTable(tableName("crm_email_domain_routes"));
   },
 };

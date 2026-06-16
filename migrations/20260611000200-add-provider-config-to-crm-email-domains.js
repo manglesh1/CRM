@@ -1,6 +1,14 @@
 "use strict";
 
-const TABLE = "crm_email_domains";
+function crmSchema() {
+  return process.env.CRM_DB_SCHEMA || "crm";
+}
+
+function tableName(tableName) {
+  return { tableName, schema: crmSchema() };
+}
+
+const TABLE = tableName("crm_email_domains");
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
@@ -8,7 +16,7 @@ module.exports = {
       type: Sequelize.UUID,
       allowNull: true,
       references: {
-        model: "crm_provider_configs",
+        model: tableName("crm_provider_configs"),
         key: "id",
       },
       onDelete: "SET NULL",

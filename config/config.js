@@ -52,6 +52,7 @@ function fromUrl() {
   return {
     use_env_variable: "MOVIRA_CRM_DATABASE_URL",
     ...base,
+    schema: crmSchema(),
     define: {
       schema: crmSchema(),
     },
@@ -67,6 +68,7 @@ function fromParts() {
     host: process.env.MOVIRA_CRM_DB_HOST || "127.0.0.1",
     port: Number(process.env.MOVIRA_CRM_DB_PORT || 5432),
     ...base,
+    schema: crmSchema(),
     define: {
       schema: crmSchema(),
     },
