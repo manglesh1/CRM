@@ -1,5 +1,6 @@
 const express = require("express");
 const auth = require("../../../shared/auth");
+const authorizeLocation = require("../../../shared/authorizeLocation");
 const service = require("./service");
 const testHarnessService = require("./testHarnessService");
 const queueMonitoringService = require("./queueMonitoringService");
@@ -8,7 +9,21 @@ const sesWebhookService = require("../../webhooks/sesService");
 const auditService = require("../../audit/service");
 
 const router = express.Router();
-router.use(auth);
+router.use(auth, authorizeLocation({
+  action: (req) => {
+    if (req.method === "DELETE") return "crm:marketing:delete";
+    if (
+      req.path.includes("test-send") ||
+      req.path.includes("/queue") ||
+      req.path.includes("/retry") ||
+      req.path.includes("/resume")
+    ) {
+      return "crm:marketing:send";
+    }
+    return `crm:marketing:${req.method === "GET" ? "read" : "write"}`;
+  },
+  requireLocation: true,
+}));
 
 function sendError(res, err) {
   return res.status(err.statusCode).json({
@@ -435,7 +450,10 @@ router.post("/templates/render", async (req, res, next) => {
 
 router.post("/templates/test-send", async (req, res, next) => {
   try {
-    const data = await service.sendTestDraftTemplate(req.body || {});
+    const data = await service.sendTestDraftTemplate({
+      ...(req.body || {}),
+      locationId: req.body?.locationId || req.query.locationId,
+    });
     await safeAudit(req, {
       action: "template_draft_test_sent",
       entityType: "marketing_template",

@@ -1,6 +1,6 @@
 module.exports = {
   up: async (queryInterface) => {
-    await queryInterface.sequelize.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm;`);
+    await queryInterface.sequelize.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;`);
 
     await queryInterface.sequelize.query(`
       CREATE INDEX IF NOT EXISTS crm_contacts_tags_gin_idx

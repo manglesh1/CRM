@@ -2,7 +2,7 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.sequelize.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
+    await queryInterface.sequelize.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public`);
 
     await queryInterface.createTable("crm_transactional_messages", {
       id: {

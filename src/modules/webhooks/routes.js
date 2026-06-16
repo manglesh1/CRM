@@ -1,10 +1,11 @@
 const express = require("express");
 const sesService = require("./sesService");
 const providerEventsService = require("./providerEventsService");
+const { webhookAuth } = require("../../shared/webhookAuth");
 
 const router = express.Router();
 
-router.post("/ses", async (req, res, next) => {
+router.post("/ses", webhookAuth("ses"), async (req, res, next) => {
   try {
     const data = await sesService.handleSesWebhook(req.body || {});
     res.json({ success: true, data });
@@ -13,7 +14,7 @@ router.post("/ses", async (req, res, next) => {
   }
 });
 
-router.post("/mailgun", async (req, res, next) => {
+router.post("/mailgun", webhookAuth("mailgun"), async (req, res, next) => {
   try {
     const data = await providerEventsService.handleMailgunWebhook(req.body || {});
     res.json({ success: true, data });
@@ -22,7 +23,7 @@ router.post("/mailgun", async (req, res, next) => {
   }
 });
 
-router.post("/postmark", async (req, res, next) => {
+router.post("/postmark", webhookAuth("postmark"), async (req, res, next) => {
   try {
     const data = await providerEventsService.handlePostmarkWebhook(req.body || {});
     res.json({ success: true, data });
@@ -31,7 +32,7 @@ router.post("/postmark", async (req, res, next) => {
   }
 });
 
-router.post("/sendgrid", async (req, res, next) => {
+router.post("/sendgrid", webhookAuth("sendgrid"), async (req, res, next) => {
   try {
     const data = await providerEventsService.handleSendgridWebhook(req.body || {});
     res.json({ success: true, data });

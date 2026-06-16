@@ -1,11 +1,19 @@
 const express = require("express");
 const auth = require("../../shared/auth");
+const authorizeLocation = require("../../shared/authorizeLocation");
 const service = require("./service");
 const auditService = require("../audit/service");
 const queueJobs = require("../queueJobs/service");
 
 const router = express.Router();
-router.use(auth);
+router.use(auth, authorizeLocation({
+  action: (req) => {
+    if (req.method === "DELETE") return "crm:segments:delete";
+    if (req.method === "GET" || req.path === "/preview") return "crm:segments:read";
+    return "crm:segments:write";
+  },
+  requireLocation: true,
+}));
 
 function sendError(res, err) {
   return res.status(err.statusCode || 500).json({

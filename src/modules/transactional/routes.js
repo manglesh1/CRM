@@ -1,9 +1,19 @@
 const express = require("express");
+const auth = require("../../shared/auth");
+const authorizeLocation = require("../../shared/authorizeLocation");
 const transactionalService = require("./service");
 const templateService = require("./templateService");
 const operationsService = require("./operationsService");
 
 const router = express.Router();
+router.use(auth, authorizeLocation({
+  action: (req) => {
+    if (req.method === "DELETE") return "crm:transactional:delete";
+    if (req.path.includes("test-send") || req.path.includes("/messages")) return "crm:transactional:send";
+    return `crm:transactional:${req.method === "GET" ? "read" : "write"}`;
+  },
+  requireLocation: true,
+}));
 
 router.get("/overview", (_req, res) => {
   res.json({

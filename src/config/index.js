@@ -4,6 +4,8 @@ const requiredInProduction = [
   "MOVIRA_CRM_DATABASE_URL",
   "JWT_SECRET",
   "INTERNAL_API_SECRET",
+  "MOVIRA_CORE_API_BASE_URL",
+  "CRM_ALLOWED_ORIGINS",
   "AWS_REGION",
   "SQS_TRANSACTIONAL_CRITICAL_URL",
   "SQS_TRANSACTIONAL_DEFAULT_URL",
@@ -36,6 +38,14 @@ function awsRegionEnv(key, fallback) {
   return value;
 }
 
+function postgresIdentifierEnv(key, fallback) {
+  const value = String(process.env[key] || fallback || "").trim();
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(value)) {
+    throw new Error(`${key} must be a valid PostgreSQL identifier. Current value: ${value || "missing"}`);
+  }
+  return value;
+}
+
 const config = {
   env: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 4100),
@@ -43,6 +53,7 @@ const config = {
     crm: {
       url: process.env.MOVIRA_CRM_DATABASE_URL || null,
       envVar: "MOVIRA_CRM_DATABASE_URL",
+      schema: postgresIdentifierEnv("CRM_DB_SCHEMA", "crm"),
       ssl: booleanEnv("MOVIRA_CRM_DB_SSL", process.env.NODE_ENV === "production"),
     },
   },
@@ -53,8 +64,23 @@ const config = {
     publicBaseUrl: (process.env.CRM_PUBLIC_BASE_URL || "").replace(/\/+$/, ""),
     trackingBaseUrl: (process.env.CRM_TRACKING_BASE_URL || "").replace(/\/+$/, ""),
   },
+  security: {
+    allowedOrigins: String(process.env.CRM_ALLOWED_ORIGINS || "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+    allowUnsignedWebhooks: booleanEnv("CRM_ALLOW_UNSIGNED_WEBHOOKS", process.env.NODE_ENV !== "production"),
+  },
   integrations: {
-    coreApiBaseUrl: (process.env.MOVIRA_CORE_API_BASE_URL || "http://127.0.0.1:5171/api").replace(/\/+$/, ""),
+    coreApiBaseUrl: (process.env.MOVIRA_CORE_API_BASE_URL || (process.env.NODE_ENV === "production" ? "" : "http://127.0.0.1:5171/api")).replace(/\/+$/, ""),
+  },
+  webhooks: {
+    sharedSecret: process.env.CRM_WEBHOOK_SHARED_SECRET || "",
+    mailgunSigningKey: process.env.MAILGUN_WEBHOOK_SIGNING_KEY || "",
+    sendgridPublicKey: process.env.SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY || "",
+    postmarkToken: process.env.POSTMARK_WEBHOOK_TOKEN || "",
+    postmarkUsername: process.env.POSTMARK_WEBHOOK_USERNAME || "",
+    postmarkPassword: process.env.POSTMARK_WEBHOOK_PASSWORD || "",
   },
   aws: {
     region: awsRegionEnv("AWS_REGION", "us-east-1"),

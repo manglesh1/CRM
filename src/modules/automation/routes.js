@@ -1,9 +1,17 @@
 const express = require("express");
 const auth = require("../../shared/auth");
+const authorizeLocation = require("../../shared/authorizeLocation");
 const service = require("./service");
 
 const router = express.Router();
-router.use(auth);
+router.use(auth, authorizeLocation({
+  action: (req) => {
+    if (req.method === "DELETE") return "crm:automation:delete";
+    if (req.path.includes("/publish")) return "crm:automation:publish";
+    return `crm:automation:${req.method === "GET" ? "read" : "write"}`;
+  },
+  requireLocation: true,
+}));
 
 function sendError(res, err) {
   return res.status(err.statusCode || 500).json({

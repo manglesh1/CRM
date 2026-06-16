@@ -1,9 +1,13 @@
 const express = require("express");
 const auth = require("../../../shared/auth");
+const authorizeLocation = require("../../../shared/authorizeLocation");
 const service = require("./service");
 
 const router = express.Router();
-router.use(auth);
+router.use(auth, authorizeLocation({
+  action: (req) => `crm:marketing:${req.method === "GET" ? "read" : "write"}`,
+  requireLocation: true,
+}));
 
 function sendError(res, err) {
   return res.status(err.statusCode).json({

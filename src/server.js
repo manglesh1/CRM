@@ -6,6 +6,7 @@ const cors = require("cors");
 const pinoHttp = require("pino-http");
 const logger = require("./shared/logger");
 const routes = require("./routes");
+const corsOptions = require("./shared/corsOptions");
 const triggerLinkService = require("./modules/marketing/triggerLinks/service");
 const marketingTrackingRoutes = require("./modules/marketing/tracking/routes");
 const transactionalTrackingRoutes = require("./modules/transactional/trackingRoutes");
@@ -16,8 +17,13 @@ const port = Number(process.env.PORT || 4100);
 
 
 app.use(helmet());
-app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: "2mb" }));
+app.use(cors(corsOptions));
+app.use(express.json({
+  limit: "2mb",
+  verify: (req, _res, buf) => {
+    req.rawBody = Buffer.from(buf);
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: "2mb" }));
 app.use(pinoHttp({ logger }));
 

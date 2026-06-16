@@ -1,4 +1,7 @@
 const express = require("express");
+const auth = require("../../shared/auth");
+const authorizeLocation = require("../../shared/authorizeLocation");
+const internalAuth = require("../../shared/internalAuth");
 const service = require("./service");
 
 const router = express.Router();
@@ -14,7 +17,7 @@ function handleError(err, res, next) {
   return next(err);
 }
 
-router.post("/events", async (req, res, next) => {
+router.post("/events", internalAuth, async (req, res, next) => {
   try {
     const result = await service.ingestEvent(req.body);
     res.status(result.duplicate ? 200 : 202).json({
@@ -27,9 +30,17 @@ router.post("/events", async (req, res, next) => {
   }
 });
 
-router.get("/events", (_req, res) => {
+router.get("/events", auth, authorizeLocation({
+  action: "crm:notifications:read",
+  requireLocation: true,
+}), (_req, res) => {
   res.json({ success: true, data: service.listEvents() });
 });
+
+router.use(auth, authorizeLocation({
+  action: (req) => `crm:notifications:${req.method === "GET" ? "read" : "write"}`,
+  requireLocation: true,
+}));
 
 router.get("/bindings", async (req, res, next) => {
   try {

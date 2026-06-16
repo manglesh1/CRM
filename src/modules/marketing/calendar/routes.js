@@ -1,9 +1,13 @@
 const express = require("express");
 const auth = require("../../../shared/auth");
+const authorizeLocation = require("../../../shared/authorizeLocation");
 const service = require("./service");
 
 const router = express.Router();
-router.use(auth);
+router.use(auth, authorizeLocation({
+  action: (req) => `crm:marketing-calendar:${req.method === "GET" ? "read" : "write"}`,
+  requireLocation: true,
+}));
 
 function locationFrom(req) {
   return req.query.locationId || req.body.locationId;

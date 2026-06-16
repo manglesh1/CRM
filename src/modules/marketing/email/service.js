@@ -128,6 +128,20 @@ function stripHtml(value) {
     .trim();
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function plainTextToHtml(value) {
+  const escaped = escapeHtml(value);
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.55;color:#111827;white-space:pre-wrap;">${escaped}</div>`;
+}
+
 function unique(values) {
   return Array.from(new Set(values.filter(Boolean)));
 }
@@ -908,7 +922,21 @@ async function renderTemplate(id, { data } = {}) {
   };
 }
 
-function renderDraftTemplate({ name = "Draft email", designJson, data } = {}) {
+function renderDraftTemplate({ name = "Draft email", designJson, htmlBody, plainText, editorType = "design", data } = {}) {
+  if (editorType === "code") {
+    return {
+      editorType,
+      htmlBody: htmlBody || "",
+      plainText: plainText || stripHtml(htmlBody || ""),
+    };
+  }
+  if (editorType === "plain") {
+    return {
+      editorType,
+      htmlBody: plainTextToHtml(plainText || ""),
+      plainText: plainText || "",
+    };
+  }
   if (designJson) validateDesign(designJson);
   const rendered = renderDesign(designJson || createDefaultDesign(), {
     title: name,
@@ -959,35 +987,42 @@ async function sendTestTemplate(id, { to, subject, data, from } = {}) {
   };
 }
 
-async function sendTestDraftTemplate({ to, subject, name = "Draft email", useCase = "marketing", designJson, data, from } = {}) {
+async function sendTestDraftTemplate({ to, subject, name = "Draft email", useCase = "marketing", editorType = "design", designJson, htmlBody, plainText, data, from, locationId } = {}) {
+  const nextEditorType = VALID_EDITOR_TYPES.includes(editorType) ? editorType : "design";
   validate([
     !EMAIL_RE.test(String(to || "").trim()) && { field: "to", message: "Valid test recipient email is required." },
     !subject && { field: "subject", message: "Subject is required for test send." },
-    designJson && typeof designJson === "object" ? null : { field: "designJson", message: "designJson is required." },
+    nextEditorType === "design" && !(designJson && typeof designJson === "object") && { field: "designJson", message: "designJson is required." },
+    nextEditorType === "code" && !String(htmlBody || "").trim() && { field: "htmlBody", message: "HTML body is required." },
+    nextEditorType === "plain" && !String(plainText || "").trim() && { field: "plainText", message: "Plain text body is required." },
   ]);
   if (designJson) validateDesign(designJson);
+  const renderedHtml = nextEditorType === "design"
+    ? renderDesign(designJson || createDefaultDesign(), { title: name, data: data || {} }).html
+    : nextEditorType === "plain"
+      ? plainTextToHtml(plainText || "")
+      : htmlBody || "";
   const templateValidation = validateTemplateBeforeSend({
     name,
-    editorType: "design",
+    editorType: nextEditorType,
     useCase,
-    designJson,
-    htmlBody: null,
-    plainText: null,
+    designJson: nextEditorType === "design" ? designJson : null,
+    htmlBody: nextEditorType === "code" ? renderedHtml : null,
+    plainText: nextEditorType === "plain" ? plainText : null,
   }, {
     subject,
     recipients: [{ email: String(to).trim(), data: data || {} }],
     data: data || {},
   });
   validate(templateValidation.errors.map((issue) => ({ field: issue.key, message: issue.message })));
-  const rendered = renderDesign(designJson || createDefaultDesign(), { title: name, data: data || {} });
   const send = useCase === "transactional"
     ? emailProvider.sendTransactionalEmail
     : emailProvider.sendMarketingEmail;
   const result = await send({
-    locationId: null,
+    locationId: locationId || null,
     to: String(to).trim(),
     subject,
-    html: rendered.html,
+    html: renderedHtml,
     from,
     trackingTags: [{ name: "purpose", value: "draft_test_send" }],
   });

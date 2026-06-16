@@ -9,6 +9,20 @@ const base = {
   logging: false,
 };
 
+function crmSchema() {
+  const schema = process.env.CRM_DB_SCHEMA || "crm";
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(schema)) {
+    throw new Error("CRM_DB_SCHEMA must be a valid PostgreSQL identifier");
+  }
+  return schema;
+}
+
+function dialectOptions() {
+  return {
+    options: `-c search_path=${crmSchema()},public`,
+  };
+}
+
 function shouldUseSsl() {
   const value = String(process.env.MOVIRA_CRM_DB_SSL || "").toLowerCase();
   if (["false", "0", "no", "disable"].includes(value)) return false;
@@ -17,13 +31,17 @@ function shouldUseSsl() {
 }
 
 function sslOptions() {
-  if (!shouldUseSsl()) return {};
   return {
     dialectOptions: {
+      ...dialectOptions(),
+      ...(shouldUseSsl()
+        ? {
       ssl: {
         require: true,
         rejectUnauthorized: false,
       },
+          }
+        : {}),
     },
   };
 }
@@ -32,6 +50,9 @@ function fromUrl() {
   return {
     use_env_variable: "MOVIRA_CRM_DATABASE_URL",
     ...base,
+    define: {
+      schema: crmSchema(),
+    },
     ...sslOptions(),
   };
 }
@@ -40,10 +61,13 @@ function fromParts() {
   return {
     username: process.env.MOVIRA_CRM_DB_USERNAME || "your_db_username",
     password: process.env.MOVIRA_CRM_DB_PASSWORD || "your_db_password",
-    database: process.env.MOVIRA_CRM_DB_NAME || "movira_crm_db",
+    database: process.env.MOVIRA_CRM_DB_NAME || "movira_core",
     host: process.env.MOVIRA_CRM_DB_HOST || "127.0.0.1",
     port: Number(process.env.MOVIRA_CRM_DB_PORT || 5432),
     ...base,
+    define: {
+      schema: crmSchema(),
+    },
     ...sslOptions(),
   };
 }

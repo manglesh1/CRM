@@ -15,18 +15,25 @@ function getSequelize() {
     throw new Error("MOVIRA_CRM_DATABASE_URL is required for CRM database access");
   }
 
-  logger.info({ databaseEnvVar: crmDatabase.envVar }, "connecting to Movira CRM database");
-  sequelize = new Sequelize(crmDatabase.url, {
-    dialect: "postgres",
-    logging: (msg) => logger.debug({ sql: msg }, "sequelize"),
-    dialectOptions: shouldUseSsl()
+  logger.info({ databaseEnvVar: crmDatabase.envVar, schema: crmDatabase.schema }, "connecting to Movira CRM database");
+  const dialectOptions = {
+    options: `-c search_path=${crmDatabase.schema},public`,
+    ...(shouldUseSsl()
       ? {
           ssl: {
             require: true,
             rejectUnauthorized: false,
           },
         }
-      : undefined,
+      : {}),
+  };
+  sequelize = new Sequelize(crmDatabase.url, {
+    dialect: "postgres",
+    logging: (msg) => logger.debug({ sql: msg }, "sequelize"),
+    dialectOptions,
+    define: {
+      schema: crmDatabase.schema,
+    },
     pool: {
       max: 10,
       min: 0,

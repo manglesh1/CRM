@@ -1,0 +1,128 @@
+const config = require("../config");
+
+const CACHE_TTL_MS = 60 * 1000;
+const accessCache = new Map();
+
+function normalizeLocationId(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function extractLocationId(req) {
+  return normalizeLocationId(
+    req.body?.locationId ||
+      req.query?.locationId ||
+      req.params?.locationId ||
+      req.headers["x-location-id"]
+  );
+}
+
+function cacheKey({ userId, locationId, action }) {
+  return `${userId}:${locationId || "none"}:${action || "crm:read"}`;
+}
+
+function readCache(key) {
+  const hit = accessCache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt < Date.now()) {
+    accessCache.delete(key);
+    return null;
+  }
+  return hit.value;
+}
+
+function writeCache(key, value) {
+  accessCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
+async function askCoreAuthorization({ user, locationId, action, req }) {
+  const userId = Number(user?.id || user?.user_id);
+  if (!userId) {
+    const err = new Error("Invalid user context.");
+    err.statusCode = 401;
+    throw err;
+  }
+
+  const key = cacheKey({ userId, locationId, action });
+  const cached = readCache(key);
+  if (cached) return cached;
+
+  const url = `${config.integrations.coreApiBaseUrl}/internal/crm/authorize`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-internal-api-secret": config.internalApiSecret,
+    },
+    body: JSON.stringify({
+      userId,
+      roleId: user.role_id,
+      role: user.role,
+      locationId,
+      action,
+      route: req.originalUrl,
+      method: req.method,
+    }),
+  });
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+
+  const result = {
+    allowed: response.ok && payload?.allowed === true,
+    statusCode: response.status,
+    payload,
+  };
+
+  writeCache(key, result);
+  return result;
+}
+
+module.exports = function authorizeLocation(options = {}) {
+  const action = options.action || "crm:read";
+  const requireLocation = options.requireLocation === true;
+
+  return async function authorizeLocationMiddleware(req, res, next) {
+    try {
+      const locationId = extractLocationId(req);
+      if (requireLocation && !locationId) {
+        return res.status(400).json({
+          success: false,
+          error: "location_id_required",
+          message: "locationId is required.",
+        });
+      }
+
+      const result = await askCoreAuthorization({
+        user: req.user,
+        locationId,
+        action: typeof action === "function" ? action(req) : action,
+        req,
+      });
+
+      if (!result.allowed) {
+        return res.status(result.statusCode === 401 ? 401 : 403).json({
+          success: false,
+          error: "location_access_denied",
+          message: "You do not have access to this CRM location.",
+        });
+      }
+
+      req.crmAuthz = result.payload?.data || {};
+      req.crmLocationId = locationId;
+      return next();
+    } catch (err) {
+      req.log?.error?.({ err }, "CRM authorization failed");
+      return res.status(err.statusCode || 503).json({
+        success: false,
+        error: "authorization_service_unavailable",
+        message: "Unable to verify CRM access right now.",
+      });
+    }
+  };
+};

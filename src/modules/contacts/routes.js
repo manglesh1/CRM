@@ -1,12 +1,20 @@
 const express = require("express");
 const auth = require("../../shared/auth");
+const authorizeLocation = require("../../shared/authorizeLocation");
 const service = require("./service");
 const record = require("./recordService");
 const auditService = require("../audit/service");
 const queueJobs = require("../queueJobs/service");
 
 const router = express.Router();
-router.use(auth);
+router.use(auth, authorizeLocation({
+  action: (req) => {
+    if (req.method === "DELETE") return "crm:contacts:delete";
+    if (req.method === "GET" || ["/search", "/filter-counts"].includes(req.path)) return "crm:contacts:read";
+    return "crm:contacts:write";
+  },
+  requireLocation: true,
+}));
 
 function sendError(res, err) {
   return res.status(err.statusCode || 500).json({

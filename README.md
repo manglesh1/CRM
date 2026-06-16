@@ -13,16 +13,16 @@ Transactional and marketing live as **separate tables** but share **one builder 
 
 ## Database boundary
 
-`movira-crm` must use its own Postgres database, separate from the booking/core database.
+`movira-crm` uses the same Postgres database as the booking/core app, but all CRM-owned tables live in a dedicated PostgreSQL schema.
 
 Recommended production layout:
 
 ```
-movira-core-db  -> bookings, payments, schedules, waivers, POS, staff
-movira-crm-db   -> contacts, segments, email, automations, audit logs
+movira_core.public  -> bookings, payments, schedules, waivers, POS, staff
+movira_core.crm     -> contacts, segments, email, automations, audit logs
 ```
 
-Use `MOVIRA_CRM_DATABASE_URL` for this service. Do not use generic `DATABASE_URL`, `DB_NAME`, or `DB_HOST` keys here; those names can collide with the booking/core app and accidentally point CRM migrations at the wrong database.
+Use `MOVIRA_CRM_DATABASE_URL` for this service even when it points at the same physical database as aeroSportsAdmin. Do not use generic `DATABASE_URL`, `DB_NAME`, or `DB_HOST` keys here; those names can collide with the booking/core app and accidentally point CRM migrations at the wrong place. `CRM_DB_SCHEMA` controls the CRM schema name and defaults to `crm`.
 
 CRM queue work is stored in `crm_queue_jobs` with separate queues:
 
@@ -89,7 +89,8 @@ npm run worker:automation     # CRM automation trigger jobs
 
 | Var | Required | Purpose |
 |---|---|---|
-| `MOVIRA_CRM_DATABASE_URL` | prod | Dedicated Movira CRM Postgres connection string |
+| `MOVIRA_CRM_DATABASE_URL` | prod | Movira CRM Postgres connection string; can point to the same database as aeroSportsAdmin |
+| `CRM_DB_SCHEMA` | no | PostgreSQL schema used by CRM tables (default `crm`) |
 | `MOVIRA_CRM_DB_SSL` | prod | Enables/disables SSL for the CRM database connection |
 | `MOVIRA_CRM_DB_USERNAME` | dev only | CRM DB username when no URL is provided |
 | `MOVIRA_CRM_DB_PASSWORD` | dev only | CRM DB password when no URL is provided |
@@ -97,6 +98,16 @@ npm run worker:automation     # CRM automation trigger jobs
 | `MOVIRA_CRM_DB_HOST` | dev only | CRM DB host when no URL is provided |
 | `MOVIRA_CRM_DB_PORT` | dev only | CRM DB port when no URL is provided |
 | `PORT` | no | API port (default 4100) |
+| `JWT_SECRET` | prod | Same JWT signing secret used by aeroSportsAdmin |
+| `INTERNAL_API_SECRET` | prod | Shared service-to-service secret for aeroSportsAdmin ↔ movira-crm |
+| `MOVIRA_CORE_API_BASE_URL` | prod | aeroSportsAdmin API base URL, ending in `/api` |
+| `CRM_ALLOWED_ORIGINS` | prod | Comma-separated frontend origins allowed by CORS |
+| `CRM_WEBHOOK_SHARED_SECRET` | optional | Extra shared-secret header for custom webhook forwarders (`x-movira-webhook-secret`) |
+| `MAILGUN_WEBHOOK_SIGNING_KEY` | if Mailgun webhooks enabled | Mailgun webhook signing key |
+| `SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY` | if SendGrid webhooks enabled | SendGrid signed event webhook public key |
+| `POSTMARK_WEBHOOK_TOKEN` | if Postmark token guard enabled | Expected `x-postmark-webhook-token` header |
+| `POSTMARK_WEBHOOK_USERNAME` / `POSTMARK_WEBHOOK_PASSWORD` | if Postmark basic auth enabled | Basic auth credentials configured on the Postmark webhook |
+| `CRM_ALLOW_UNSIGNED_WEBHOOKS` | dev only | Allows unsigned provider webhooks outside production |
 | `AWS_REGION` | no | AWS region for SQS/SES (default us-east-1) |
 | `AWS_*` SQS URLs | prod | Transactional + marketing queue URLs |
 | `SES_DEFAULT_FROM` | prod | Default from address |

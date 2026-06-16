@@ -1,11 +1,13 @@
 const express = require("express");
+const auth = require("../../shared/auth");
+const authorizeLocation = require("../../shared/authorizeLocation");
 const emailRoutes = require("./email/routes");
 const triggerLinksRoutes = require("./triggerLinks/routes");
 const calendarRoutes = require("./calendar/routes");
 
 const router = express.Router();
 
-router.get("/overview", (_req, res) => {
+router.get("/overview", auth, authorizeLocation({ action: "crm:marketing" }), (_req, res) => {
   res.json({
     success: true,
     data: {
