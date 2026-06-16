@@ -7,6 +7,8 @@ if (process.env.NODE_ENV === "production" && !process.env.MOVIRA_CRM_DATABASE_UR
 const base = {
   dialect: "postgres",
   logging: false,
+  migrationStorageTableSchema: "public",
+  seederStorageTableSchema: "public",
 };
 
 function crmSchema() {
