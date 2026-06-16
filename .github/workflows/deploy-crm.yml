@@ -99,28 +99,40 @@ jobs:
           npm install --no-audit --no-fund
           npx sequelize-cli db:migrate
           npx sequelize-cli db:seed:all
-          pm2 restart movira-crm --update-env || pm2 start src/server.js --name movira-crm --time
-          pm2 restart movira-crm-transactional-worker --update-env || pm2 start src/workers/transactionalWorker.js --name movira-crm-transactional-worker --time
-          pm2 restart movira-crm-marketing-worker --update-env || pm2 start src/workers/marketingWorker.js --name movira-crm-marketing-worker --time
-          pm2 restart movira-crm-marketing-audience-worker --update-env || pm2 start src/workers/marketingAudienceWorker.js --name movira-crm-marketing-audience-worker --time
-          pm2 restart movira-crm-webhooks-worker --update-env || pm2 start src/workers/sesWebhookWorker.js --name movira-crm-webhooks-worker --time
-          pm2 restart movira-crm-warmup-worker --update-env || pm2 start src/workers/senderWarmupWorker.js --name movira-crm-warmup-worker --time
-          pm2 restart movira-crm-contacts-worker --update-env || pm2 start src/workers/contactsWorker.js --name movira-crm-contacts-worker --time
-          pm2 restart movira-crm-segments-worker --update-env || pm2 start src/workers/segmentsWorker.js --name movira-crm-segments-worker --time
-          pm2 restart movira-crm-automation-worker --update-env || pm2 start src/workers/automationWorker.js --name movira-crm-automation-worker --time
+          pm2 delete movira-crm || true
+          pm2 delete movira-crm-transactional-worker || true
+          pm2 delete movira-crm-marketing-worker || true
+          pm2 delete movira-crm-marketing-audience-worker || true
+          pm2 delete movira-crm-webhooks-worker || true
+          pm2 delete movira-crm-warmup-worker || true
+          pm2 delete movira-crm-contacts-worker || true
+          pm2 delete movira-crm-segments-worker || true
+          pm2 delete movira-crm-automation-worker || true
+
+          pm2 start src/server.js --name movira-crm --time
+          pm2 start src/workers/transactionalWorker.js --name movira-crm-transactional-worker --time
+          pm2 start src/workers/marketingWorker.js --name movira-crm-marketing-worker --time
+          pm2 start src/workers/marketingAudienceWorker.js --name movira-crm-marketing-audience-worker --time
+          pm2 start src/workers/sesWebhookWorker.js --name movira-crm-webhooks-worker --time
+          pm2 start src/workers/senderWarmupWorker.js --name movira-crm-warmup-worker --time
+          pm2 start src/workers/contactsWorker.js --name movira-crm-contacts-worker --time
+          pm2 start src/workers/segmentsWorker.js --name movira-crm-segments-worker --time
+          pm2 start src/workers/automationWorker.js --name movira-crm-automation-worker --time
           pm2 save
           systemctl restart nginx
 
+          CRM_HEALTH_PORT="\$(node -p \"require('dotenv').config(); process.env.PORT || 4100\")"
           echo "Waiting for movira-crm health check..."
           attempt=1
-          until curl -fsS http://127.0.0.1:4100/health; do
+          until curl -fsS "http://127.0.0.1:\${CRM_HEALTH_PORT}/health"; do
             if [ "\$attempt" -ge 30 ]; then
-              echo "movira-crm health check failed after \$attempt attempts"
+              echo "movira-crm health check failed after \$attempt attempts on port \${CRM_HEALTH_PORT}"
               pm2 status movira-crm || true
+              pm2 describe movira-crm || true
               pm2 logs movira-crm --lines 120 --nostream || true
               exit 1
             fi
-            echo "movira-crm is not ready yet; retrying (\$attempt/30)..."
+            echo "movira-crm is not ready yet on port \${CRM_HEALTH_PORT}; retrying (\$attempt/30)..."
             attempt=\$((attempt + 1))
             sleep 2
           done
