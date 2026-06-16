@@ -99,36 +99,32 @@ jobs:
           npm install --no-audit --no-fund
           npx sequelize-cli db:migrate
           npx sequelize-cli db:seed:all
-          pm2 delete movira-crm || true
-          pm2 delete movira-crm-transactional-worker || true
-          pm2 delete movira-crm-marketing-worker || true
-          pm2 delete movira-crm-marketing-audience-worker || true
-          pm2 delete movira-crm-webhooks-worker || true
-          pm2 delete movira-crm-warmup-worker || true
-          pm2 delete movira-crm-contacts-worker || true
-          pm2 delete movira-crm-segments-worker || true
-          pm2 delete movira-crm-automation-worker || true
-
-          pm2 start src/server.js --name movira-crm --time
-          pm2 start src/workers/transactionalWorker.js --name movira-crm-transactional-worker --time
-          pm2 start src/workers/marketingWorker.js --name movira-crm-marketing-worker --time
-          pm2 start src/workers/marketingAudienceWorker.js --name movira-crm-marketing-audience-worker --time
-          pm2 start src/workers/sesWebhookWorker.js --name movira-crm-webhooks-worker --time
-          pm2 start src/workers/senderWarmupWorker.js --name movira-crm-warmup-worker --time
-          pm2 start src/workers/contactsWorker.js --name movira-crm-contacts-worker --time
-          pm2 start src/workers/segmentsWorker.js --name movira-crm-segments-worker --time
-          pm2 start src/workers/automationWorker.js --name movira-crm-automation-worker --time
-          pm2 save
-          systemctl restart nginx
+          for app in \
+            movira-crm \
+            movira-crm-transactional-worker \
+            movira-crm-marketing-worker \
+            movira-crm-marketing-audience-worker \
+            movira-crm-webhooks-worker \
+            movira-crm-warmup-worker \
+            movira-crm-contacts-worker \
+            movira-crm-segments-worker \
+            movira-crm-automation-worker
+          do
+            pm2 delete "\${app}" >/dev/null 2>&1 || true
+          done
 
           CRM_HEALTH_PORT=4100
           if [ -f .env ]; then
-            CRM_ENV_PORT=\$(awk -F= '/^PORT=/{print \$2}' .env | tail -n 1 | tr -d ' "\r')
+            CRM_ENV_PORT=\$(awk -F= '/^[[:space:]]*PORT[[:space:]]*=/{print \$2}' .env | tail -n 1 | tr -d ' "\r')
             if [ -n "\${CRM_ENV_PORT}" ]; then
               CRM_HEALTH_PORT="\${CRM_ENV_PORT}"
             fi
           fi
-          echo "Waiting for movira-crm health check..."
+
+          pm2 start src/server.js --name movira-crm --time
+          sleep 3
+          pm2 status movira-crm
+          echo "Waiting for movira-crm health check on port \${CRM_HEALTH_PORT}..."
           attempt=1
           until curl -fsS "http://127.0.0.1:\${CRM_HEALTH_PORT}/health"; do
             if [ "\$attempt" -ge 30 ]; then
@@ -142,6 +138,17 @@ jobs:
             attempt=\$((attempt + 1))
             sleep 2
           done
+
+          pm2 start src/workers/transactionalWorker.js --name movira-crm-transactional-worker --time
+          pm2 start src/workers/marketingWorker.js --name movira-crm-marketing-worker --time
+          pm2 start src/workers/marketingAudienceWorker.js --name movira-crm-marketing-audience-worker --time
+          pm2 start src/workers/sesWebhookWorker.js --name movira-crm-webhooks-worker --time
+          pm2 start src/workers/senderWarmupWorker.js --name movira-crm-warmup-worker --time
+          pm2 start src/workers/contactsWorker.js --name movira-crm-contacts-worker --time
+          pm2 start src/workers/segmentsWorker.js --name movira-crm-segments-worker --time
+          pm2 start src/workers/automationWorker.js --name movira-crm-automation-worker --time
+          pm2 save
+          systemctl restart nginx
           REMOTE
 
           jq -n --rawfile script /tmp/movira-crm-remote.sh '{commands: [$script]}' \
