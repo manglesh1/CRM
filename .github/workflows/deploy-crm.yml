@@ -121,7 +121,13 @@ jobs:
           pm2 save
           systemctl restart nginx
 
-          CRM_HEALTH_PORT="\$(node -p \"require('dotenv').config(); process.env.PORT || 4100\")"
+          CRM_HEALTH_PORT=4100
+          if [ -f .env ]; then
+            CRM_ENV_PORT=\$(awk -F= '/^PORT=/{print \$2}' .env | tail -n 1 | tr -d ' "\r')
+            if [ -n "\${CRM_ENV_PORT}" ]; then
+              CRM_HEALTH_PORT="\${CRM_ENV_PORT}"
+            fi
+          fi
           echo "Waiting for movira-crm health check..."
           attempt=1
           until curl -fsS "http://127.0.0.1:\${CRM_HEALTH_PORT}/health"; do
