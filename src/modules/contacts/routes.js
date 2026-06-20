@@ -2,7 +2,6 @@ const express = require("express");
 const auth = require("../../shared/auth");
 const authorizeLocation = require("../../shared/authorizeLocation");
 const service = require("./service");
-const record = require("./recordService");
 const auditService = require("../audit/service");
 const queueJobs = require("../queueJobs/service");
 
@@ -200,26 +199,6 @@ router.get("/export-jobs/:id/download", async (req, res, next) => {
   }
 });
 
-router.get("/duplicates", async (req, res, next) => {
-  try {
-    const data = await record.findDuplicates(req.query || {});
-    res.json({ success: true, data });
-  } catch (err) {
-    if (err.statusCode) return sendError(res, err);
-    return next(err);
-  }
-});
-
-router.post("/merge", async (req, res, next) => {
-  try {
-    const data = await record.mergeContacts({ ...req.body, locationId: req.body.locationId || req.query.locationId });
-    res.json({ success: true, data });
-  } catch (err) {
-    if (err.statusCode) return sendError(res, err);
-    return next(err);
-  }
-});
-
 router.get("/import-jobs", async (req, res, next) => {
   try {
     const data = await service.listImportJobs(req.query || {});
@@ -364,60 +343,6 @@ router.post("/bulk", async (req, res, next) => {
       })));
     }
     res.json({ success: true, data });
-  } catch (err) {
-    if (err.statusCode) return sendError(res, err);
-    return next(err);
-  }
-});
-
-router.post("/import", async (req, res, next) => {
-  try {
-    const data = await service.importContacts({ ...req.body, locationId: req.body.locationId || req.query.locationId });
-    await safeAudit(req, {
-      action: "contacts_import_queued",
-      entityType: "crm_import_job",
-      entityId: data.job?.id,
-      entityName: data.job?.fileName || req.body?.fileName || "CSV import",
-      metadata: {
-        sourceType: data.job?.sourceType || req.body?.sourceType,
-        totalRows: data.job?.totalRows || 0,
-        createdCount: data.job?.createdCount || 0,
-        updatedCount: data.job?.updatedCount || 0,
-        skippedCount: data.job?.skippedCount || 0,
-        errorCount: data.job?.errorCount || 0,
-      },
-    });
-    res.status(202).json({ success: true, data });
-  } catch (err) {
-    if (err.statusCode) return sendError(res, err);
-    return next(err);
-  }
-});
-
-router.post("/sync/movira", async (req, res, next) => {
-  try {
-    const data = await service.syncMoviraCustomers({
-      ...req.body,
-      locationId: req.body.locationId || req.query.locationId,
-      authorization: req.headers.authorization,
-    });
-    await safeAudit(req, {
-      action: "contacts_synced",
-      entityType: "crm_import_job",
-      entityId: data.job?.id,
-      entityName: data.job?.fileName || "Movira customer sync",
-      metadata: {
-        totalRows: data.job?.totalRows || 0,
-        createdCount: data.job?.createdCount || 0,
-        updatedCount: data.job?.updatedCount || 0,
-        skippedCount: data.job?.skippedCount || 0,
-        errorCount: data.job?.errorCount || 0,
-        segmentsQueuedForRefresh: data.segmentsQueuedForRefresh || 0,
-      },
-    });
-    data.segmentRefresh = await queueSegmentRefresh(req, req.body.locationId || req.query.locationId, { source: "movira_sync" });
-    data.automation = await triggerContactAutomationEvents(req, data.automationEvents || []);
-    res.status(201).json({ success: true, data });
   } catch (err) {
     if (err.statusCode) return sendError(res, err);
     return next(err);

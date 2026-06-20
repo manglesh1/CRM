@@ -120,6 +120,10 @@ function verifyPostmark(req) {
   return timingSafeEqual(decoded, `${username}:${password}`);
 }
 
+function verifyMovira(req) {
+  return verifySharedSecret(req);
+}
+
 function webhookAuth(provider) {
   return async function webhookAuthMiddleware(req, res, next) {
     try {
@@ -137,6 +141,7 @@ function webhookAuth(provider) {
         mailgun: verifyMailgun,
         sendgrid: verifySendgrid,
         postmark: verifyPostmark,
+        movira: verifyMovira,
       };
       const verifier = verifierByProvider[provider];
       if (!verifier) return unauthorized(res);
@@ -145,7 +150,8 @@ function webhookAuth(provider) {
         (provider === "ses") ||
         (provider === "mailgun" && config.webhooks.mailgunSigningKey) ||
         (provider === "sendgrid" && config.webhooks.sendgridPublicKey) ||
-        (provider === "postmark" && (config.webhooks.postmarkToken || config.webhooks.postmarkUsername));
+        (provider === "postmark" && (config.webhooks.postmarkToken || config.webhooks.postmarkUsername)) ||
+        (provider === "movira" && config.webhooks.sharedSecret);
       if (!configured) {
         const response = missingConfig(res, provider);
         if (response) return response;

@@ -3,7 +3,6 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { Op } = require("sequelize");
-const config = require("../../config");
 const { getModels } = require("../../db/models");
 const queueJobs = require("../queueJobs/service");
 const contactFieldService = require("../contactFields/service");
@@ -414,65 +413,6 @@ async function updateContact(id, input = {}) {
   return { ...data, tagsAdded: diffTags(previousTags, data.tags) };
 }
 
-function parseCsvLine(line) {
-  const values = [];
-  let current = "";
-  let quoted = false;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    const next = line[index + 1];
-    if (char === "\"" && quoted && next === "\"") {
-      current += "\"";
-      index += 1;
-    } else if (char === "\"") {
-      quoted = !quoted;
-    } else if (char === "," && !quoted) {
-      values.push(current.trim());
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-  values.push(current.trim());
-  return values;
-}
-
-function parseCsvText(csvText) {
-  const lines = String(csvText || "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length < 2) return [];
-  const headers = parseCsvLine(lines[0]).map((header) => header.trim());
-  return lines.slice(1).map((line) => {
-    const values = parseCsvLine(line);
-    return headers.reduce((row, header, index) => {
-      row[header] = values[index] || "";
-      return row;
-    }, {});
-  });
-}
-
-function mapImportRow(row = {}, defaults = {}) {
-  const pick = (...keys) => keys.map((key) => row[key]).find((value) => value !== undefined && value !== null && String(value).trim() !== "");
-  return {
-    ...defaults,
-    fullName: pick("fullName", "Full Name", "name", "Name"),
-    firstName: pick("firstName", "First Name", "firstname", "first_name"),
-    lastName: pick("lastName", "Last Name", "lastname", "last_name"),
-    email: pick("email", "Email", "guestEmail"),
-    phone: pick("phone", "Phone", "guestPhone"),
-    doNotContact: ["true", "yes", "1"].includes(String(pick("doNotContact", "Do Not Contact", "do_not_contact") || "").trim().toLowerCase()),
-    tags: pick("tags", "Tags"),
-    lifecycle: pick("lifecycle", "Lifecycle", "type") || defaults.lifecycle,
-    marketingStatus: pick("marketingStatus", "Marketing Status", "marketing_status") || defaults.marketingStatus,
-    sourceRefType: pick("sourceRefType", "externalType"),
-    sourceRefId: pick("sourceRefId", "externalId", "id", "ID"),
-    customFields: row.customFields && typeof row.customFields === "object" ? row.customFields : {},
-    sourceSnapshot: row,
-  };
-}
-
 function mapCoreCustomerToContact(customer = {}, defaults = {}) {
   const rawTags = Array.isArray(customer.tags) ? customer.tags : [];
   const tags = new Set(rawTags.filter(Boolean));
@@ -550,90 +490,110 @@ function mapCoreCustomerToContact(customer = {}, defaults = {}) {
   };
 }
 
-async function fetchCoreCustomersPage({ authorization, locationId, page, limit, search }) {
-  if (!authorization) throw badRequest("Authorization token is required for customer sync");
-  if (!config.integrations.coreApiBaseUrl) throw badRequest("MOVIRA_CORE_API_BASE_URL is not configured");
-
-  const url = new URL(`${config.integrations.coreApiBaseUrl}/customers`);
-  url.searchParams.set("page", String(page));
-  url.searchParams.set("limit", String(limit));
-  url.searchParams.set("locationId", String(locationId));
-  if (search) url.searchParams.set("search", search);
-
-  const response = await fetch(url, {
-    headers: {
-      Authorization: authorization,
-      Accept: "application/json",
-    },
+async function countDynamicSegmentsForLocation(models, locationId) {
+  return models.CrmSegment.count({
+    where: { locationId, segmentType: "dynamic", status: "active" },
   });
-
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const err = new Error(body.error || body.message || `Core customer sync failed with ${response.status}`);
-    err.statusCode = response.status;
-    throw err;
-  }
-  return body;
 }
 
-async function syncMoviraCustomers(input = {}) {
+function normalizeMoviraWebhookRows(input = {}) {
+  const body = input && typeof input === "object" ? input : {};
+  const data = body.data && typeof body.data === "object" ? body.data : null;
+  const candidate =
+    body.customer ||
+    body.contact ||
+    body.guest ||
+    body.member ||
+    body.membershipMember ||
+    data?.customer ||
+    data?.contact ||
+    data?.guest ||
+    data?.member ||
+    data?.membershipMember ||
+    data ||
+    null;
+  const rows = Array.isArray(body.customers)
+    ? body.customers
+    : Array.isArray(body.contacts)
+      ? body.contacts
+      : Array.isArray(body.guests)
+        ? body.guests
+        : Array.isArray(body.members)
+          ? body.members
+          : Array.isArray(body.data)
+            ? body.data
+            : Array.isArray(data?.customers)
+              ? data.customers
+              : Array.isArray(data?.contacts)
+                ? data.contacts
+                : Array.isArray(data?.guests)
+                  ? data.guests
+                  : Array.isArray(data?.members)
+                    ? data.members
+                    : candidate
+                      ? [candidate]
+                      : [];
+  return rows.filter((row) => row && typeof row === "object");
+}
+
+function resolveWebhookLocationId(input = {}, row = {}) {
+  return input.locationId || input.location_id || input.venueId || input.venue_id || row.locationId || row.location_id || row.venueId || row.venue_id || row.location?.id;
+}
+
+async function processMoviraCustomerWebhook(input = {}) {
   const models = getModels();
-  const locationId = requireLocation(input.locationId);
-  const limit = Math.min(100, Math.max(1, Number(input.limit || input.pageSize || 100)));
-  const maxPages = Math.min(50, Math.max(1, Number(input.maxPages || 10)));
-  const search = cleanString(input.search, 120);
-  const authorization = input.authorization;
+  const rows = normalizeMoviraWebhookRows(input);
+  if (!rows.length) throw badRequest("customer payload is required");
 
   const errors = [];
   let createdCount = 0;
   let updatedCount = 0;
   let skippedCount = 0;
-  let totalRows = 0;
   const synced = [];
   const automationEvents = [];
-  await contactFieldService.ensureSystemFields(locationId);
+  let locationId = null;
 
-  for (let page = 1; page <= maxPages; page += 1) {
-    const body = await fetchCoreCustomersPage({ authorization, locationId, page, limit, search });
-    const rows = Array.isArray(body.data) ? body.data : Array.isArray(body.items) ? body.items : [];
-    if (!rows.length) break;
-    totalRows += rows.length;
-
-    for (let index = 0; index < rows.length; index += 1) {
-      try {
-        const mapped = mapCoreCustomerToContact(rows[index], { locationId });
-        const result = await upsertContact({ ...mapped, skipFilterCountInvalidation: true });
-        if (result.created) createdCount += 1;
-        else updatedCount += 1;
-        synced.push(result.contact);
-        automationEvents.push({
-          eventType: result.created ? "customer.created" : "contact.changed",
-          contactId: result.contact.id,
-          payload: { sourceType: result.contact.sourceType, source: "movira_sync" },
-        });
-        (result.tagsAdded || []).forEach((tag) => automationEvents.push({
-          eventType: "contact.tag_added",
-          contactId: result.contact.id,
-          tag,
-          payload: { source: "movira_sync" },
-        }));
-      } catch (err) {
-        skippedCount += 1;
-        errors.push({ page, row: index + 1, sourceId: rows[index]?.id || rows[index]?.guestId, message: err.message });
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    try {
+      const rowLocationId = requireLocation(resolveWebhookLocationId(input, row));
+      if (!locationId) {
+        locationId = rowLocationId;
+        await contactFieldService.ensureSystemFields(locationId);
+      } else if (locationId !== rowLocationId) {
+        throw badRequest("Webhook batch must contain customers from one location");
       }
-    }
 
-    const totalAvailable = Number(body.total || 0);
-    if (totalAvailable && page * limit >= totalAvailable) break;
-    if (rows.length < limit) break;
+      const mapped = mapCoreCustomerToContact(row, { locationId });
+      const result = await upsertContact({ ...mapped, skipFilterCountInvalidation: true });
+      if (result.created) createdCount += 1;
+      else updatedCount += 1;
+      synced.push(result.contact);
+      automationEvents.push({
+        eventType: result.created ? "customer.created" : "contact.changed",
+        contactId: result.contact.id,
+        payload: { eventType: input.eventType || input.type || null, sourceType: result.contact.sourceType, source: "movira_webhook" },
+      });
+      (result.tagsAdded || []).forEach((tag) => automationEvents.push({
+        eventType: "contact.tag_added",
+        contactId: result.contact.id,
+        tag,
+        payload: { source: "movira_webhook" },
+      }));
+    } catch (err) {
+      skippedCount += 1;
+      errors.push({ row: index + 1, sourceId: row?.id || row?.guestId || row?.memberId, message: err.message });
+    }
   }
+
+  if (!locationId) throw badRequest("locationId is required");
 
   const job = await models.CrmContactImportJob.create({
     locationId,
-    sourceType: "movira",
-    fileName: "Movira customer sync",
+    sourceType: "webhook",
+    fileName: "Movira webhook sync",
     status: errors.length ? "completed_with_errors" : "completed",
-    totalRows,
+    totalRows: rows.length,
     createdCount,
     updatedCount,
     skippedCount,
@@ -646,10 +606,17 @@ async function syncMoviraCustomers(input = {}) {
       lifecycle: "lifecycle",
     },
     errors,
+    payload: {
+      eventType: input.eventType || input.type || null,
+      source: "movira_webhook",
+    },
+    startedAt: new Date(),
+    completedAt: new Date(),
+    lastError: errors.length ? `${errors.length} rows failed` : null,
   });
 
   const dynamicSegments = await countDynamicSegmentsForLocation(models, locationId);
-  await markContactFilterCountsStale(locationId, "movira_sync");
+  await markContactFilterCountsStale(locationId, "movira_webhook");
 
   return {
     job: plain(job),
@@ -657,112 +624,6 @@ async function syncMoviraCustomers(input = {}) {
     segmentsQueuedForRefresh: dynamicSegments,
     automationEvents,
   };
-}
-
-async function countDynamicSegmentsForLocation(models, locationId) {
-  return models.CrmSegment.count({
-    where: { locationId, segmentType: "dynamic", status: "active" },
-  });
-}
-
-async function importContacts(input = {}) {
-  const models = getModels();
-  const locationId = requireLocation(input.locationId);
-  const sourceType = cleanString(input.sourceType || "csv", 40) || "csv";
-  const rows = Array.isArray(input.contacts) ? input.contacts : parseCsvText(input.csvText);
-  if (!rows.length) throw badRequest("contacts or csvText is required");
-  const job = await models.CrmContactImportJob.create({
-    locationId,
-    sourceType,
-    fileName: cleanString(input.fileName, 240),
-    status: "queued",
-    totalRows: rows.length,
-    fieldMapping: input.fieldMapping && typeof input.fieldMapping === "object" ? input.fieldMapping : {},
-    payload: {
-      contacts: rows,
-      sourceType,
-      lifecycle: input.lifecycle || "lead",
-      marketingStatus: input.marketingStatus || "subscribed",
-      fieldMapping: input.fieldMapping && typeof input.fieldMapping === "object" ? input.fieldMapping : {},
-    },
-  });
-  const queueJob = await queueJobs.enqueueJob({
-    jobType: queueJobs.JOB_TYPES.CONTACTS_IMPORT,
-    locationId,
-    priority: 30,
-    payload: { importJobId: job.id },
-  });
-  return { job: plain(job), queued: true, queueJob };
-}
-
-async function processContactImportJob(jobId) {
-  const models = getModels();
-  const job = await models.CrmContactImportJob.findByPk(jobId);
-  if (!job) throw notFound("Contact import job");
-  const payload = job.payload || {};
-  const locationId = requireLocation(job.locationId || payload.locationId);
-  const sourceType = cleanString(payload.sourceType || job.sourceType || "csv", 40) || "csv";
-  const rows = Array.isArray(payload.contacts) ? payload.contacts : parseCsvText(payload.csvText);
-  if (!rows.length) throw badRequest("contacts or csvText is required");
-  await job.update({
-    status: "processing",
-    startedAt: job.startedAt || new Date(),
-    lastError: null,
-  });
-  await contactFieldService.ensureSystemFields(locationId);
-
-  const errors = [];
-  let createdCount = 0;
-  let updatedCount = 0;
-  let skippedCount = 0;
-  const imported = [];
-  const automationEvents = [];
-
-  for (let index = 0; index < rows.length; index += 1) {
-    try {
-      const mapped = mapImportRow(rows[index], {
-        locationId,
-        sourceType,
-        lifecycle: payload.lifecycle || "lead",
-        marketingStatus: payload.marketingStatus || "subscribed",
-        provider: sourceType,
-      });
-      const result = await upsertContact({ ...mapped, skipFilterCountInvalidation: true });
-      if (result.created) createdCount += 1;
-      else updatedCount += 1;
-      imported.push(result.contact);
-      automationEvents.push({
-        eventType: result.created ? "customer.created" : "contact.changed",
-        contactId: result.contact.id,
-        payload: { sourceType, source: "contact_import" },
-      });
-      (result.tagsAdded || []).forEach((tag) => automationEvents.push({
-        eventType: "contact.tag_added",
-        contactId: result.contact.id,
-        tag,
-        payload: { source: "contact_import" },
-      }));
-    } catch (err) {
-      skippedCount += 1;
-      errors.push({ row: index + 1, message: err.message });
-    }
-  }
-
-  const updatedJob = await job.update({
-    status: errors.length ? "completed_with_errors" : "completed",
-    totalRows: rows.length,
-    createdCount,
-    updatedCount,
-    skippedCount,
-    errorCount: errors.length,
-    fieldMapping: payload.fieldMapping && typeof payload.fieldMapping === "object" ? payload.fieldMapping : job.fieldMapping || {},
-    errors,
-    completedAt: new Date(),
-    lastError: errors.length ? `${errors.length} rows failed` : null,
-  });
-  await markContactFilterCountsStale(locationId, "contact_import");
-
-  return { job: plain(updatedJob), contacts: imported.slice(0, 25), automationEvents };
 }
 
 async function listImportJobs(query = {}) {
@@ -1854,9 +1715,7 @@ module.exports = {
   deleteContact,
   getContact,
   updateContact,
-  importContacts,
-  processContactImportJob,
-  syncMoviraCustomers,
+  processMoviraCustomerWebhook,
   listImportJobs,
   getContactStats,
   normalizeEmail,

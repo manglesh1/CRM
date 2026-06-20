@@ -1,6 +1,5 @@
-// Customer "record" depth: notes, a per-contact activity timeline (built from
-// marketing + transactional messages plus automation runs), and duplicate
-// detection + merge. Kept separate from the high-traffic list/search service.
+// Customer "record" depth: notes and a per-contact activity timeline built from
+// marketing + transactional messages plus automation runs.
 
 const { Op } = require("sequelize");
 const { getModels } = require("../../db/models");
@@ -170,124 +169,9 @@ async function getActivity(contactId, query = {}) {
   return { items, email };
 }
 
-// ---- Duplicate detection + merge ------------------------------------------
-
-async function findDuplicates(query = {}) {
-  const models = getModels();
-  const locationId = requireLocation(query.locationId);
-  const sequelize = models.sequelize;
-
-  const run = (column) =>
-    sequelize.query(
-      `SELECT "${column}" AS key, COUNT(*) AS count
-       FROM crm_contacts
-       WHERE "locationId" = :locationId AND "${column}" IS NOT NULL AND "${column}" <> ''
-       GROUP BY "${column}" HAVING COUNT(*) > 1
-       ORDER BY COUNT(*) DESC LIMIT 100`,
-      { replacements: { locationId }, type: sequelize.QueryTypes.SELECT }
-    );
-
-  const [emailGroups, phoneGroups] = await Promise.all([run("normalizedEmail"), run("normalizedPhone")]);
-
-  const groups = [];
-  const seen = new Set();
-
-  const addGroups = async (rows, type, column) => {
-    for (const row of rows) {
-      const contacts = await models.CrmContact.findAll({
-        where: { locationId, [column]: row.key },
-        order: [["createdAt", "ASC"]],
-        attributes: ["id", "fullName", "email", "phone", "sourceType", "tags", "lifecycle", "createdAt"],
-      });
-      if (contacts.length < 2) continue;
-      const signature = contacts.map((c) => c.id).sort().join("|");
-      if (seen.has(signature)) continue;
-      seen.add(signature);
-      groups.push({ type, key: row.key, count: contacts.length, contacts: contacts.map(plain) });
-    }
-  };
-
-  await addGroups(emailGroups, "email", "normalizedEmail");
-  await addGroups(phoneGroups, "phone", "normalizedPhone");
-
-  return { groups, total: groups.length };
-}
-
-async function mergeContacts(input = {}) {
-  const models = getModels();
-  const locationId = requireLocation(input.locationId);
-  const primaryId = input.primaryId;
-  const mergeIds = Array.from(new Set((Array.isArray(input.mergeIds) ? input.mergeIds : []).filter((id) => id && id !== primaryId))).slice(0, 20);
-  if (!primaryId) throw badRequest("primaryId is required");
-  if (!mergeIds.length) throw badRequest("mergeIds is required");
-
-  return models.sequelize.transaction(async (transaction) => {
-    const primary = await models.CrmContact.findOne({ where: { id: primaryId, locationId }, transaction });
-    if (!primary) throw notFound("Primary contact");
-    const losers = await models.CrmContact.findAll({ where: { id: { [Op.in]: mergeIds }, locationId }, transaction });
-    if (!losers.length) throw badRequest("No contacts to merge");
-
-    const merged = {
-      fullName: primary.fullName,
-      firstName: primary.firstName,
-      lastName: primary.lastName,
-      email: primary.email,
-      normalizedEmail: primary.normalizedEmail,
-      phone: primary.phone,
-      normalizedPhone: primary.normalizedPhone,
-      tags: Array.isArray(primary.tags) ? [...primary.tags] : [],
-      customFields: { ...(primary.customFields || {}) },
-      sourceSnapshot: { ...(primary.sourceSnapshot || {}) },
-      doNotContact: Boolean(primary.doNotContact),
-    };
-
-    for (const loser of losers) {
-      merged.fullName = merged.fullName || loser.fullName;
-      merged.firstName = merged.firstName || loser.firstName;
-      merged.lastName = merged.lastName || loser.lastName;
-      merged.email = merged.email || loser.email;
-      merged.normalizedEmail = merged.normalizedEmail || loser.normalizedEmail;
-      merged.phone = merged.phone || loser.phone;
-      merged.normalizedPhone = merged.normalizedPhone || loser.normalizedPhone;
-      merged.tags = Array.from(new Set([...merged.tags, ...(Array.isArray(loser.tags) ? loser.tags : [])]));
-      merged.customFields = { ...(loser.customFields || {}), ...merged.customFields };
-      merged.sourceSnapshot = { ...(loser.sourceSnapshot || {}), ...merged.sourceSnapshot };
-      merged.doNotContact = merged.doNotContact || Boolean(loser.doNotContact);
-
-      // Reassign identities (respecting the per-location unique constraint).
-      const identities = await models.CrmContactIdentity.findAll({ where: { contactId: loser.id }, transaction });
-      for (const identity of identities) {
-        const exists = await models.CrmContactIdentity.findOne({
-          where: { locationId, provider: identity.provider, externalType: identity.externalType, externalId: identity.externalId, contactId: primaryId },
-          transaction,
-        });
-        if (exists) await identity.destroy({ transaction });
-        else await identity.update({ contactId: primaryId }, { transaction });
-      }
-
-      // Reassign segment memberships (unique segmentId+contactId).
-      const memberships = await models.CrmSegmentMember.findAll({ where: { contactId: loser.id }, transaction });
-      for (const membership of memberships) {
-        const exists = await models.CrmSegmentMember.findOne({ where: { segmentId: membership.segmentId, contactId: primaryId }, transaction });
-        if (exists) await membership.destroy({ transaction });
-        else await membership.update({ contactId: primaryId }, { transaction });
-      }
-
-      await models.CrmContactNote.update({ contactId: primaryId }, { where: { contactId: loser.id }, transaction });
-      await models.CrmAutomationRun.update({ contactId: primaryId }, { where: { contactId: loser.id }, transaction });
-    }
-
-    await models.CrmContact.destroy({ where: { id: { [Op.in]: losers.map((l) => l.id) }, locationId }, transaction });
-    const updated = await primary.update(merged, { transaction });
-    return { contact: plain(updated), mergedCount: losers.length };
-  });
-}
-
 module.exports = {
   listNotes,
   createNote,
   deleteNote,
   getActivity,
-  findDuplicates,
-  mergeContacts,
 };
