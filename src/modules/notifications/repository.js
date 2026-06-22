@@ -27,7 +27,7 @@ async function listBindings({ eventType, channel, locationId, includeInactive = 
   if (eventType) where.eventType = eventType;
   if (channel) where.channel = channel;
   if (locationId !== undefined) {
-    where.locationId = locationId === null ? { [Op.is]: null } : locationId;
+    where.locationId = locationId === null ? { [Op.is]: null } : { [Op.or]: [locationId, { [Op.is]: null }] };
   }
   if (!includeInactive) where.isActive = true;
 
