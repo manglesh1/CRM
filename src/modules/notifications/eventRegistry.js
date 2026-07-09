@@ -138,6 +138,90 @@ const EVENTS = {
       reminderStage: "due_soon",
     },
   },
+  "saas.invoice.voided": {
+    description: "SaaS invoice voided; notify the customer owner that the invoice is no longer payable",
+    sourceSystem: "aeroSportsAdmin",
+    sourceResourceType: "saas_invoice",
+    requiredPayloadFields: ["guestName", "venueName", "invoiceNumber"],
+    samplePayload: {
+      guestName: "Yogesh Niranjan",
+      venueName: "Summit Splash Park",
+      invoiceNumber: "SaaS-0001-00001",
+      status: "void",
+    },
+  },
+  "saas.invoice.refunded": {
+    description: "SaaS invoice payment refunded; send refund confirmation to the customer owner",
+    sourceSystem: "aeroSportsAdmin",
+    sourceResourceType: "saas_invoice",
+    requiredPayloadFields: ["guestName", "venueName", "invoiceNumber", "paidAmount"],
+    samplePayload: {
+      guestName: "Yogesh Niranjan",
+      venueName: "Summit Splash Park",
+      invoiceNumber: "SaaS-0001-00001",
+      paidAmount: "$0.00",
+      status: "refunded",
+    },
+  },
+  "saas.billing.past_due": {
+    description: "SaaS billing is past due; notify the customer owner before suspension",
+    sourceSystem: "aeroSportsAdmin",
+    sourceResourceType: "saas_park",
+    requiredPayloadFields: ["guestName", "venueName", "invoiceNumber", "balanceDue"],
+    samplePayload: {
+      guestName: "Yogesh Niranjan",
+      venueName: "Summit Splash Park",
+      invoiceNumber: "SaaS-0001-00001",
+      balanceDue: "$548.00",
+      lifecycleState: "past_due",
+    },
+  },
+  "saas.billing.suspended": {
+    description: "SaaS billing hold applied; notify the customer owner that access is paused",
+    sourceSystem: "aeroSportsAdmin",
+    sourceResourceType: "saas_park",
+    requiredPayloadFields: ["guestName", "venueName", "invoiceNumber", "balanceDue"],
+    samplePayload: {
+      guestName: "Yogesh Niranjan",
+      venueName: "Summit Splash Park",
+      invoiceNumber: "SaaS-0001-00001",
+      balanceDue: "$548.00",
+      lifecycleState: "suspended",
+    },
+  },
+  "saas.billing.recovered": {
+    description: "SaaS billing recovered; notify the customer owner that the account is back in good standing",
+    sourceSystem: "aeroSportsAdmin",
+    sourceResourceType: "saas_park",
+    requiredPayloadFields: ["guestName", "venueName"],
+    samplePayload: {
+      guestName: "Yogesh Niranjan",
+      venueName: "Summit Splash Park",
+      lifecycleState: "recovered",
+    },
+  },
+  "saas.park.go_live": {
+    description: "SaaS park approved for live operations; notify the customer owner",
+    sourceSystem: "aeroSportsAdmin",
+    sourceResourceType: "saas_park",
+    requiredPayloadFields: ["guestName", "venueName"],
+    samplePayload: {
+      guestName: "Yogesh Niranjan",
+      venueName: "Summit Splash Park",
+      parkStatus: "live",
+    },
+  },
+  "saas.park.go_live_blocked": {
+    description: "SaaS park go-live blocked by missing checks; notify the customer owner",
+    sourceSystem: "aeroSportsAdmin",
+    sourceResourceType: "saas_park",
+    requiredPayloadFields: ["guestName", "venueName"],
+    samplePayload: {
+      guestName: "Yogesh Niranjan",
+      venueName: "Summit Splash Park",
+      parkStatus: "needs_checks",
+    },
+  },
 };
 
 function isRegistered(eventType) {
