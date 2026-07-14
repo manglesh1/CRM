@@ -11,6 +11,7 @@ const FAMILY_PROFILES = {
   membership: { accent: "#C2410C", dark: "#4A1F08", soft: "#FDEFE6", label: "Membership" },
   giftcard: { accent: "#FB8B24", dark: "#6A3410", soft: "#FFF6EA", label: "Gift Card" },
   guestList: { accent: "#E2560F", dark: "#561F08", soft: "#FFF2EA", label: "Guest List" },
+  saas: { accent: "#F45B0A", dark: "#3D1708", soft: "#FFF3E8", label: "Movira SaaS" },
   simple: { accent: "#B45309", dark: "#44260C", soft: "#FBF3EA", label: "Notice" },
   system: { accent: "#B45309", dark: "#44260C", soft: "#FBF3EA", label: "Notice" },
 };
@@ -235,8 +236,105 @@ function buildGenericMain(profile, title) {
   );
 }
 
+function saasRow(label, value) {
+  return `
+    <tr>
+      <td style="padding:10px 0;border-bottom:1px solid #F3F0EC;">
+        <div class="txn-label">${label}</div>
+      </td>
+      <td align="right" style="padding:10px 0;border-bottom:1px solid #F3F0EC;">
+        <div class="txn-value">${value}</div>
+      </td>
+    </tr>
+  `;
+}
+
+function saasStatusFor(row) {
+  const key = row.key || "";
+  if (key === "saasInvoicePaymentLink") return "Payment due";
+  if (key === "saasInvoicePaid") return "Paid";
+  if (key === "saasInvoiceReminder") return "Reminder";
+  if (key === "saasInvoiceVoided") return "Voided";
+  if (key === "saasInvoiceRefunded") return "Refunded";
+  if (key === "saasBillingPastDue") return "Past due";
+  if (key === "saasBillingSuspended") return "Billing hold";
+  if (key === "saasBillingRecovered") return "Recovered";
+  if (key === "saasParkGoLive") return "Live";
+  if (key === "saasParkGoLiveBlocked") return "Needs checks";
+  if (key === "saasOnboardingStarted") return "Onboarding";
+  return "SaaS update";
+}
+
+function buildSaasMain(profile, row) {
+  const key = row.key || "";
+  const onboarding = key === "saasOnboardingStarted" || key === "saasParkGoLive" || key === "saasParkGoLiveBlocked";
+  const paymentLink = key === "saasInvoicePaymentLink";
+  const paid = key === "saasInvoicePaid";
+  const reminder = key === "saasInvoiceReminder" || key === "saasBillingPastDue" || key === "saasBillingSuspended";
+  const refunded = key === "saasInvoiceRefunded";
+  const title = onboarding ? "Park launch status" : paid ? "Payment receipt" : paymentLink ? "Secure payment request" : "Billing summary";
+  const amountValue = paid ? "{{paidAmountLabel}}" : refunded ? "{{paidAmountLabel}}" : reminder ? "{{balanceDueLabel}}" : "{{totalAmountLabel}}";
+  const rows = onboarding
+    ? [
+        saasRow("Park", "{{venueName}}"),
+        saasRow("Organization", "{{organizationName}}"),
+        saasRow("Current phase", "{{onboardingPhase}}"),
+        saasRow("Modules", "{{modules}}"),
+      ].join("")
+    : [
+        saasRow("Invoice", "{{invoiceNumber}}"),
+        saasRow("Billing cycle", "{{billingCycle}}"),
+        saasRow("Period", "{{periodStart}} - {{periodEnd}}"),
+        saasRow("Due date", "{{dueDate}}"),
+        saasRow(paid ? "Paid amount" : refunded ? "Current paid balance" : reminder ? "Balance due" : "Total", amountValue),
+      ].join("");
+
+  return buildSummaryCard(
+    profile,
+    title,
+    `
+      <tr class="txn-row">
+        <td style="padding:16px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            <tr>
+              <td>
+                <div class="txn-label">Status</div>
+                <div class="txn-total" style="margin-top:5px;">${saasStatusFor(row)}</div>
+              </td>
+              <td align="right">
+                <div style="display:inline-block;padding:8px 12px;border-radius:999px;background:${profile.soft};color:${profile.accent};font-size:12px;font-weight:800;">${saasStatusFor(row)}</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr class="txn-row">
+        <td style="padding:6px 16px 12px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">${rows}</table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:15px 16px;background:#FFFBF7;">
+          ${
+            onboarding
+              ? '<div class="txn-muted">{{lifecycleMessage}}</div><div class="txn-muted">Phase: {{onboardingPhase}}</div><div style="height:10px;line-height:10px;">&nbsp;</div>{{ownerAccessHtml}}'
+              : '<div class="txn-label" style="margin-bottom:8px;">Line items</div>{{lineItemsHtml}}<div style="height:10px;line-height:10px;">&nbsp;</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td class="txn-muted">Base</td><td align="right" class="txn-value">{{baseAmount}}</td></tr><tr><td class="txn-muted">Modules</td><td align="right" class="txn-value">{{moduleAmount}}</td></tr><tr><td class="txn-muted">Discount</td><td align="right" class="txn-value">{{discountAmount}}</td></tr><tr><td class="txn-muted">Tax</td><td align="right" class="txn-value">{{taxAmount}}</td></tr></table>'
+          }
+          ${
+            paymentLink
+              ? '<div style="margin-top:14px;padding:12px 14px;border-radius:10px;background:#ffffff;border:1px solid #FED7AA;color:#7C2D12;font-size:13px;line-height:1.5;">This payment link is generated by Movira for SaaS subscription billing. It is separate from guest checkout and POS payments.</div>'
+              : ""
+          }
+        </td>
+      </tr>
+    `
+  );
+}
+
 function actionFor(row) {
   const key = row.key;
+  if (key === "saasInvoicePaymentLink") return { label: "Pay invoice", href: "{{paymentLink}}" };
+  if (key === "saasOnboardingStarted") return { label: "Open Movira", href: "{{loginUrl}}" };
   if (key === "paymentLink") return { label: "Pay now", href: "{{paymentLink}}" };
   if (["waiverLink", "waiverExpiryReminder", "waiver-reminder"].includes(key)) {
     return { label: "Sign waiver", href: "{{waiverShareUrl}}" };
@@ -251,6 +349,7 @@ function actionFor(row) {
 }
 
 function mainContentFor(row, profile, headingText) {
+  if (row.family === "saas") return buildSaasMain(profile, row);
   if (row.family === "booking" && row.key === "bookingConfirmation") return buildBookingMain(profile);
   if (row.family === "payment") return buildPaymentMain(profile, row.key);
   if (row.family === "waiver") return buildWaiverMain(profile, row.key);
@@ -378,6 +477,24 @@ function collectTransactionalVariables(row, design) {
 
 function buildTransactionalPlainText(row = {}) {
   const defaults = parseJson(row.defaults);
+  if (row.family === "saas") {
+    return [
+      defaults.heading || row.name || "Movira SaaS update",
+      "",
+      String(defaults.paragraph || "Hi {{guestName}}, here is your Movira SaaS update.")
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<[^>]+>/g, ""),
+      "",
+      "Park: {{venueName}}",
+      "Organization: {{organizationName}}",
+      "Invoice: {{invoiceNumber}}",
+      "Status: {{status}}",
+      "Amount due: {{amountDueLabel}}",
+      "Due date: {{dueDate}}",
+      "Payment link: {{paymentLink}}",
+      "Login URL: {{loginUrl}}",
+    ].join("\n");
+  }
   return [
     defaults.heading || row.name || "Update from {{venueName}}",
     "",
