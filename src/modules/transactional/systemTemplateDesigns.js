@@ -11,6 +11,7 @@ const FAMILY_PROFILES = {
   membership: { accent: "#C2410C", dark: "#4A1F08", soft: "#FDEFE6", label: "Membership" },
   giftcard: { accent: "#FB8B24", dark: "#6A3410", soft: "#FFF6EA", label: "Gift Card" },
   guestList: { accent: "#E2560F", dark: "#561F08", soft: "#FFF2EA", label: "Guest List" },
+  customer_experience: { accent: "#F45B0A", dark: "#173B35", soft: "#FFF4EC", label: "Guest Feedback" },
   simple: { accent: "#B45309", dark: "#44260C", soft: "#FBF3EA", label: "Notice" },
   system: { accent: "#B45309", dark: "#44260C", soft: "#FBF3EA", label: "Notice" },
 };
@@ -237,6 +238,8 @@ function buildGenericMain(profile, title) {
 
 function actionFor(row) {
   const key = row.key;
+  if (key === "customerExperienceFeedbackRequest") return { label: "Start survey", href: "{{feedbackUrl}}" };
+  if (key === "customerExperienceFeedbackReceived") return { label: "Open feedback inbox", href: "{{feedbackAdminUrl}}" };
   if (key === "paymentLink") return { label: "Pay now", href: "{{paymentLink}}" };
   if (["waiverLink", "waiverExpiryReminder", "waiver-reminder"].includes(key)) {
     return { label: "Sign waiver", href: "{{waiverShareUrl}}" };
@@ -248,6 +251,207 @@ function actionFor(row) {
   if (key === "bookingConfirmation") return { label: "View tickets", href: "{{ticketsUrl}}" };
   if (key === "payment-receipt") return { label: "View receipt", href: "{{receiptUrl}}" };
   return null;
+}
+
+function buildCustomerExperienceRequestMain(profile) {
+  return `
+    ${buildSummaryCard(
+      profile,
+      "Your recent visit",
+      `
+        <tr class="txn-row">
+          <td style="padding:13px 16px;">
+            <div class="txn-label">Activity</div>
+            <div class="txn-value">{{activityName}}</div>
+            <div class="txn-muted" style="margin-top:6px;">Visited {{visitDate}}</div>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:13px 16px;">
+            <div class="txn-label">Survey</div>
+            <div class="txn-value">{{surveyFormName}}</div>
+            <div class="txn-muted" style="margin-top:6px;">Booking {{bookingNumber}}</div>
+          </td>
+        </tr>
+      `
+    )}
+    <div style="font-size:13px;font-weight:800;color:#1A1614;margin:20px 0 9px;">Start with a quick rating</div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" aria-label="Rate your visit from 1 to 5">
+      <tr>
+        ${[1, 2, 3, 4, 5]
+          .map(
+            (rating) => `
+              <td width="20%" style="padding:${rating === 1 ? "0 3px 0 0" : rating === 5 ? "0 0 0 3px" : "0 3px"};">
+                <a href="{{feedbackUrl}}?rating=${rating}" style="display:block;padding:12px 2px;border:1px solid #E3DCD5;border-radius:6px;text-align:center;text-decoration:none;font-size:16px;font-weight:800;color:${profile.accent};background:#ffffff;">${rating}</a>
+              </td>
+            `
+          )
+          .join("")}
+      </tr>
+      <tr>
+        <td colspan="2" style="padding-top:6px;font-size:11px;color:#8A8079;">Needs attention</td>
+        <td></td>
+        <td colspan="2" style="padding-top:6px;text-align:right;font-size:11px;color:#8A8079;">Excellent</td>
+      </tr>
+    </table>
+  `;
+}
+
+function buildCustomerExperienceResponseMain(profile) {
+  return `
+    ${styleVars(profile)}
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="txn-card">
+      <tr>
+        <td style="padding:18px;background:${profile.soft};border-bottom:1px solid #F3F0EC;">
+          <span class="txn-pill">{{sentimentLabel}}</span>
+          <div style="font-size:34px;line-height:1;font-weight:800;color:#1A1614;margin-top:12px;">{{ratingOverall}}/5</div>
+          <div class="txn-muted" style="margin-top:7px;">Experience score {{experienceScore}}</div>
+        </td>
+      </tr>
+      <tr class="txn-row">
+        <td style="padding:16px 18px;">
+          <div class="txn-label">Guest comment</div>
+          <div class="txn-value" style="margin-top:7px;font-weight:600;">{{feedbackComment}}</div>
+        </td>
+      </tr>
+      <tr class="txn-row">
+        <td style="padding:16px 18px;">
+          <div class="txn-label" style="margin-bottom:8px;">Ratings and tags</div>
+          {{factorRatingsHtml}}
+          {{feedbackTagsHtml}}
+          {{surveyAnswersHtml}}
+        </td>
+      </tr>
+      <tr class="txn-row">
+        <td style="padding:16px 18px;">
+          <div class="txn-label">Guest</div>
+          <div class="txn-value" style="margin-top:5px;">{{guestName}}</div>
+          <div class="txn-muted" style="margin-top:4px;">{{guestEmail}} {{guestPhone}}</div>
+          <div class="txn-muted" style="margin-top:4px;">Follow-up requested: {{contactRequestedLabel}}</div>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:16px 18px;">
+          <div class="txn-label">Visit</div>
+          <div class="txn-value" style="margin-top:5px;">{{activityName}}</div>
+          <div class="txn-muted" style="margin-top:4px;">{{visitDate}} / Booking {{bookingNumber}}</div>
+          <div class="txn-muted" style="margin-top:4px;">Survey: {{surveyFormName}}</div>
+        </td>
+      </tr>
+    </table>
+  `;
+}
+
+function buildCustomerExperienceDesign(row, profile, defaults) {
+  const headingText = defaults.heading || row.name || "Guest feedback";
+  const paragraph = defaults.paragraph || "A guest shared feedback about their visit.";
+  const action = actionFor(row);
+  const isRequest = row.key === "customerExperienceFeedbackRequest";
+  const isResponse = row.key === "customerExperienceFeedbackReceived";
+  const mainHtml = isRequest
+    ? buildCustomerExperienceRequestMain(profile)
+    : isResponse
+      ? buildCustomerExperienceResponseMain(profile)
+      : buildGenericMain(profile, headingText);
+
+  return {
+    schemaVersion: 1,
+    settings: {
+      contentWidth: 600,
+      backgroundColor: "#F6F3EF",
+      bodyColor: "#ffffff",
+      fontFamily: "Arial, Helvetica, sans-serif",
+      fontSize: 15,
+      textColor: "#1A1614",
+      headingColor: "#1A1614",
+      linkColor: profile.accent,
+      buttonColor: profile.accent,
+      dividerColor: "#ECE7E1",
+      customCss:
+        "@media only screen and (max-width:480px){.txn-card{border-radius:0!important}.cx-email-heading{font-size:25px!important}}",
+    },
+    sections: [
+      section("cx_header", "1", { backgroundColor: "#ffffff", padding: { top: 20, right: 26, bottom: 18, left: 26 } }, [
+        column("cx_header_col", "100%", [
+          text("cx_venue", "{{venueName}}", { fontSize: 18, fontWeight: 800, color: "#1A1614", padding: { top: 0, right: 0, bottom: 3, left: 0 } }),
+          text("cx_location", "{{locationAddress}}", { fontSize: 12, color: "#8A8079", padding: { top: 0, right: 0, bottom: 0, left: 0 } }),
+        ]),
+      ]),
+      section("cx_hero", "1", { backgroundColor: isResponse ? profile.dark : profile.soft, padding: { top: 30, right: 28, bottom: 28, left: 28 } }, [
+        column("cx_hero_col", "100%", [
+          text("cx_kicker", isResponse ? "NEW RESPONSE" : "YOUR VISIT MATTERS", {
+            fontSize: 11,
+            fontWeight: 800,
+            color: isResponse ? "#BCE5D9" : profile.accent,
+            padding: { top: 0, right: 0, bottom: 8, left: 0 },
+          }),
+          heading("cx_heading", headingText, {
+            className: "cx-email-heading",
+            fontSize: 30,
+            lineHeight: "1.15",
+            fontWeight: 800,
+            color: isResponse ? "#ffffff" : "#1A1614",
+            padding: { top: 0, right: 0, bottom: 10, left: 0 },
+          }),
+          text("cx_intro", paragraph, {
+            fontSize: 15,
+            lineHeight: "1.55",
+            color: isResponse ? "#E8F3F0" : "#5F554E",
+            padding: { top: 0, right: 0, bottom: 0, left: 0 },
+          }),
+        ]),
+      ]),
+      section("cx_main", "1", { backgroundColor: "#ffffff", padding: { top: 24, right: 24, bottom: 24, left: 24 } }, [
+        column("cx_main_col", "100%", [
+          code("cx_main_card", mainHtml),
+          ...(action
+            ? [
+                button("cx_action", action.label, action.href, {
+                  backgroundColor: profile.accent,
+                  color: "#ffffff",
+                  align: "left",
+                  fontSize: 15,
+                  fontWeight: 800,
+                  paddingY: 13,
+                  paddingX: 24,
+                  radius: 6,
+                  padding: { top: 18, right: 0, bottom: 8, left: 0 },
+                }),
+              ]
+            : []),
+          ...(isRequest
+            ? [
+                text("cx_fallback_link", 'Button not working? Open this survey link:<br><a href="{{feedbackUrl}}">{{feedbackUrl}}</a>', {
+                  fontSize: 12,
+                  color: "#8A8079",
+                  lineHeight: "1.5",
+                  padding: { top: 8, right: 0, bottom: 0, left: 0 },
+                }),
+              ]
+            : []),
+          divider("cx_divider", { color: "#ECE7E1", height: 1, padding: { top: 20, right: 0, bottom: 16, left: 0 } }),
+          text("cx_support", isResponse
+            ? "This operational notification was sent to the recipients configured on the survey form."
+            : 'Questions about your visit? Email <a href="mailto:{{locationEmail}}">{{locationEmail}}</a> or call {{locationPhone}}.', {
+            fontSize: 13,
+            color: "#8A8079",
+            lineHeight: "1.5",
+            padding: { top: 0, right: 0, bottom: 0, left: 0 },
+          }),
+        ]),
+      ]),
+      section("cx_footer", "1", { backgroundColor: "#FBF7F2", padding: { top: 20, right: 24, bottom: 22, left: 24 } }, [
+        column("cx_footer_col", "100%", [
+          footer("cx_footer_text", "{{venueName}}<br>{{locationAddress}}<br>{{locationPhone}} {{locationEmail}}<br><br>Powered by Movira CRM", {
+            align: "left",
+            fontSize: 12,
+            color: "#8A8079",
+            lineHeight: "1.6",
+          }),
+        ]),
+      ]),
+    ],
+  };
 }
 
 function mainContentFor(row, profile, headingText) {
@@ -262,6 +466,7 @@ function buildTransactionalSystemDesign(row = {}) {
   const defaults = parseJson(row.defaults);
   const family = row.family || row.category || "system";
   const profile = FAMILY_PROFILES[family] || FAMILY_PROFILES.system;
+  if (family === "customer_experience") return buildCustomerExperienceDesign(row, profile, defaults);
   const headingText = defaults.heading || row.name || "Update from {{venueName}}";
   const paragraph = defaults.paragraph || "Hi {{guestName}},<br/>Here are the details for your visit.";
   const action = actionFor(row);
@@ -378,6 +583,32 @@ function collectTransactionalVariables(row, design) {
 
 function buildTransactionalPlainText(row = {}) {
   const defaults = parseJson(row.defaults);
+  if (row.family === "customer_experience" && row.key === "customerExperienceFeedbackRequest") {
+    return [
+      defaults.heading || "How was your visit?",
+      "",
+      String(defaults.paragraph || "").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, ""),
+      "",
+      "Start survey: {{feedbackUrl}}",
+      "Activity: {{activityName}}",
+      "Visit date: {{visitDate}}",
+      "Booking: {{bookingNumber}}",
+      "Venue: {{venueName}}",
+    ].join("\n");
+  }
+  if (row.family === "customer_experience" && row.key === "customerExperienceFeedbackReceived") {
+    return [
+      defaults.heading || "New guest feedback",
+      "",
+      "{{guestName}} submitted {{ratingOverall}}/5 feedback for {{venueName}}.",
+      "Sentiment: {{sentimentLabel}}",
+      "Comment: {{feedbackComment}}",
+      "Activity: {{activityName}}",
+      "Visit date: {{visitDate}}",
+      "Booking: {{bookingNumber}}",
+      "Open feedback inbox: {{feedbackAdminUrl}}",
+    ].join("\n");
+  }
   return [
     defaults.heading || row.name || "Update from {{venueName}}",
     "",
