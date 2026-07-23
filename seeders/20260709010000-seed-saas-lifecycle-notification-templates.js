@@ -8,68 +8,92 @@ const {
 
 const templates = [
   {
-    slug: "saasOnboardingStarted",
-    name: "SaaS onboarding started",
+    slug: "saasInvoiceVoided",
+    name: "SaaS invoice voided",
+    family: "saas",
+    category: "saas-billing",
+    description: "Tell the customer owner that an invoice is no longer payable.",
+    subject: "Invoice {{invoiceNumber}} has been voided",
+    heading: "Invoice voided",
+    paragraph:
+      "Hi {{guestName}},<br/>Invoice <strong>{{invoiceNumber}}</strong> for <strong>{{venueName}}</strong> has been voided and is no longer payable.<br/><br/>Status: {{status}}",
+  },
+  {
+    slug: "saasInvoiceRefunded",
+    name: "SaaS invoice refunded",
+    family: "saas",
+    category: "saas-billing",
+    description: "Confirm a SaaS invoice refund to the customer owner.",
+    subject: "Refund processed for invoice {{invoiceNumber}}",
+    heading: "Refund processed",
+    paragraph:
+      "Hi {{guestName}},<br/>A refund has been processed for invoice <strong>{{invoiceNumber}}</strong> for <strong>{{venueName}}</strong>.<br/><br/>Current paid balance: <strong>{{paidAmountLabel}}</strong><br/>Status: {{status}}",
+  },
+  {
+    slug: "saasBillingPastDue",
+    name: "SaaS billing past due",
+    family: "saas",
+    category: "saas-billing",
+    description: "Warn the customer owner before billing suspension.",
+    subject: "Action needed: invoice {{invoiceNumber}} is past due",
+    heading: "Billing is past due",
+    paragraph:
+      "Hi {{guestName}},<br/>Invoice <strong>{{invoiceNumber}}</strong> for <strong>{{venueName}}</strong> is past due.<br/><br/>Balance due: <strong>{{balanceDueLabel}}</strong><br/>Due date: {{dueDate}}<br/><br/>{{lifecycleMessage}}",
+  },
+  {
+    slug: "saasBillingSuspended",
+    name: "SaaS billing suspended",
+    family: "saas",
+    category: "saas-billing",
+    description: "Notify the customer owner when a park is paused for non-payment.",
+    subject: "{{venueName}} is paused for billing",
+    heading: "Billing hold applied",
+    paragraph:
+      "Hi {{guestName}},<br/><strong>{{venueName}}</strong> has been paused because invoice <strong>{{invoiceNumber}}</strong> is overdue.<br/><br/>Balance due: <strong>{{balanceDueLabel}}</strong><br/>{{lifecycleMessage}}",
+  },
+  {
+    slug: "saasBillingRecovered",
+    name: "SaaS billing recovered",
+    family: "saas",
+    category: "saas-billing",
+    description: "Confirm that the SaaS billing account is back in good standing.",
+    subject: "{{venueName}} billing is back in good standing",
+    heading: "Billing recovered",
+    paragraph:
+      "Hi {{guestName}},<br/>Billing for <strong>{{venueName}}</strong> is back in good standing.<br/><br/>{{lifecycleMessage}}",
+  },
+  {
+    slug: "saasParkGoLive",
+    name: "SaaS park go-live approved",
     family: "saas",
     category: "saas-onboarding",
-    description: "Welcome a new park owner and explain the onboarding path.",
-    subject: "Welcome to Movira — {{venueName}} onboarding has started",
-    heading: "Your Movira workspace is ready",
+    description: "Tell the customer owner that their park is live.",
+    subject: "{{venueName}} is live on Movira",
+    heading: "Your park is live",
     paragraph:
-      "Hi {{guestName}},<br/>We have started onboarding <strong>{{venueName}}</strong>. Current phase: <strong>{{onboardingPhase}}</strong>.<br/>{{ownerAccessHtml}}We will complete owner access, module access, billing, payment setup, and go-live approval before the park is released.",
+      "Hi {{guestName}},<br/><strong>{{venueName}}</strong> has been approved for live operations.<br/><br/>Current phase: {{onboardingPhase}}<br/>{{lifecycleMessage}}",
   },
   {
-    slug: "saasInvoiceIssued",
-    name: "SaaS invoice issued",
+    slug: "saasParkGoLiveBlocked",
+    name: "SaaS park go-live blocked",
     family: "saas",
-    category: "saas-billing",
-    description: "Send SaaS invoice summary after billing is configured or refreshed.",
-    subject: "Invoice {{invoiceNumber}} for {{venueName}}",
-    heading: "Your Movira invoice is ready",
+    category: "saas-onboarding",
+    description: "Tell the customer owner that go-live needs more checks.",
+    subject: "{{venueName}} needs checks before go-live",
+    heading: "Go-live needs attention",
     paragraph:
-      "Hi {{guestName}},<br/>Invoice <strong>{{invoiceNumber}}</strong> for <strong>{{venueName}}</strong> is ready.<br/><br/>Billing cycle: {{billingCycle}}<br/>Period: {{periodStart}} to {{periodEnd}}<br/>Due date: {{dueDate}}<br/>Total: <strong>{{totalAmount}}</strong><br/><br/>{{lineItemsHtml}}",
-  },
-  {
-    slug: "saasInvoicePaymentLink",
-    name: "SaaS invoice payment link",
-    family: "saas",
-    category: "saas-billing",
-    description: "Send a secure payment link for a SaaS invoice.",
-    subject: "Payment link for invoice {{invoiceNumber}}",
-    heading: "Complete your Movira payment",
-    paragraph:
-      "Hi {{guestName}},<br/>Use the secure payment link below to pay invoice <strong>{{invoiceNumber}}</strong> for <strong>{{venueName}}</strong>.<br/><br/>Amount due: <strong>{{amountDue}}</strong><br/>Due date: {{dueDate}}<br/><br/><a href=\"{{paymentLink}}\">Pay invoice now</a>",
-  },
-  {
-    slug: "saasInvoicePaid",
-    name: "SaaS invoice paid receipt",
-    family: "saas",
-    category: "saas-billing",
-    description: "Confirm SaaS invoice payment and send receipt information.",
-    subject: "Payment received for invoice {{invoiceNumber}}",
-    heading: "Payment received",
-    paragraph:
-      "Hi {{guestName}},<br/>Payment has been received for invoice <strong>{{invoiceNumber}}</strong> for <strong>{{venueName}}</strong>.<br/><br/>Paid amount: <strong>{{paidAmountLabel}}</strong><br/>Paid on: {{paidAt}}<br/>Status: {{status}}",
-  },
-  {
-    slug: "saasInvoiceReminder",
-    name: "SaaS invoice reminder",
-    family: "saas",
-    category: "saas-billing",
-    description: "Remind a customer owner about a due or overdue SaaS invoice.",
-    subject: "Reminder: invoice {{invoiceNumber}} is due for {{venueName}}",
-    heading: "Invoice reminder",
-    paragraph:
-      "Hi {{guestName}},<br/>This is a reminder for invoice <strong>{{invoiceNumber}}</strong> for <strong>{{venueName}}</strong>.<br/><br/>Balance due: <strong>{{balanceDueLabel}}</strong><br/>Due date: {{dueDate}}<br/>Reminder stage: {{reminderStage}}<br/><br/>If you already paid, no further action is needed.",
+      "Hi {{guestName}},<br/><strong>{{venueName}}</strong> is not live yet because required checks are incomplete.<br/><br/>Current phase: {{onboardingPhase}}<br/>{{lifecycleMessage}}",
   },
 ];
 
 const bindings = [
-  { eventType: "saas.onboarding.started", templateKey: "saasOnboardingStarted", priority: "normal" },
-  { eventType: "saas.invoice.issued", templateKey: "saasInvoiceIssued", priority: "normal" },
-  { eventType: "saas.invoice.payment_link", templateKey: "saasInvoicePaymentLink", priority: "high" },
-  { eventType: "saas.invoice.paid", templateKey: "saasInvoicePaid", priority: "high" },
-  { eventType: "saas.invoice.reminder", templateKey: "saasInvoiceReminder", priority: "normal" },
+  { eventType: "saas.invoice.voided", templateKey: "saasInvoiceVoided", priority: "normal" },
+  { eventType: "saas.invoice.refunded", templateKey: "saasInvoiceRefunded", priority: "high" },
+  { eventType: "saas.billing.past_due", templateKey: "saasBillingPastDue", priority: "normal" },
+  { eventType: "saas.billing.suspended", templateKey: "saasBillingSuspended", priority: "high" },
+  { eventType: "saas.billing.recovered", templateKey: "saasBillingRecovered", priority: "normal" },
+  { eventType: "saas.park.go_live", templateKey: "saasParkGoLive", priority: "high" },
+  { eventType: "saas.park.go_live_blocked", templateKey: "saasParkGoLiveBlocked", priority: "normal" },
 ];
 
 function buildBody(template) {
@@ -81,9 +105,7 @@ function buildVariables(template) {
   const text = `${template.subject || ""} ${template.heading || ""} ${template.paragraph || ""}`;
   const re = /\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g;
   let match;
-  while ((match = re.exec(text)) !== null) {
-    set.add(match[1]);
-  }
+  while ((match = re.exec(text)) !== null) set.add(match[1]);
   return Array.from(set);
 }
 
@@ -146,9 +168,7 @@ module.exports = {
           { locationId: null, key: template.slug, channel: "email", isSystem: true }
         );
       } else {
-        await queryInterface.bulkInsert("crm_transactional_templates", [
-          { ...row, createdAt: new Date() },
-        ]);
+        await queryInterface.bulkInsert("crm_transactional_templates", [{ ...row, createdAt: new Date() }]);
       }
     }
 
@@ -172,7 +192,7 @@ module.exports = {
         priority: binding.priority,
         variableMap: JSON.stringify({}),
         isActive: true,
-        notes: "System default SaaS billing binding",
+        notes: "System default SaaS lifecycle binding",
         updatedAt: new Date(),
       };
 
@@ -183,9 +203,7 @@ module.exports = {
           { eventType: binding.eventType, channel: "email", locationId: null }
         );
       } else {
-        await queryInterface.bulkInsert("crm_event_template_bindings", [
-          { ...row, createdAt: new Date() },
-        ]);
+        await queryInterface.bulkInsert("crm_event_template_bindings", [{ ...row, createdAt: new Date() }]);
       }
     }
   },

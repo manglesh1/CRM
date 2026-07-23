@@ -46,6 +46,13 @@ function postgresIdentifierEnv(key, fallback) {
   return value;
 }
 
+function queueUrlEnv(key) {
+  if (process.env.NODE_ENV !== "production" && process.env.CRM_USE_REAL_SQS_IN_DEV !== "true") {
+    return "";
+  }
+  return process.env[key] || "";
+}
+
 const config = {
   env: process.env.NODE_ENV || "development",
   port: Number(process.env.PORT || 4100),
@@ -85,13 +92,13 @@ const config = {
   aws: {
     region: awsRegionEnv("AWS_REGION", "us-east-1"),
     queues: {
-      transactionalCritical: process.env.SQS_TRANSACTIONAL_CRITICAL_URL || "",
-      transactionalCriticalDlq: process.env.SQS_TRANSACTIONAL_CRITICAL_DLQ_URL || "",
-      transactionalDefault: process.env.SQS_TRANSACTIONAL_DEFAULT_URL || "",
-      transactionalDefaultDlq: process.env.SQS_TRANSACTIONAL_DEFAULT_DLQ_URL || "",
-      marketingBulk: process.env.SQS_MARKETING_BULK_URL || "",
-      marketingJourney: process.env.SQS_MARKETING_JOURNEY_URL || "",
-      webhookEvents: process.env.SQS_WEBHOOK_EVENTS_URL || "",
+      transactionalCritical: queueUrlEnv("SQS_TRANSACTIONAL_CRITICAL_URL"),
+      transactionalCriticalDlq: queueUrlEnv("SQS_TRANSACTIONAL_CRITICAL_DLQ_URL"),
+      transactionalDefault: queueUrlEnv("SQS_TRANSACTIONAL_DEFAULT_URL"),
+      transactionalDefaultDlq: queueUrlEnv("SQS_TRANSACTIONAL_DEFAULT_DLQ_URL"),
+      marketingBulk: queueUrlEnv("SQS_MARKETING_BULK_URL"),
+      marketingJourney: queueUrlEnv("SQS_MARKETING_JOURNEY_URL"),
+      webhookEvents: queueUrlEnv("SQS_WEBHOOK_EVENTS_URL"),
     },
     ses: {
       region: awsRegionEnv("AWS_SES_REGION", "us-east-1"),
