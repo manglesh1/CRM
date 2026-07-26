@@ -2,6 +2,7 @@ const { SESv2Client, SendEmailCommand } = require("@aws-sdk/client-sesv2");
 const MailComposer = require("nodemailer/lib/mail-composer");
 const { Op } = require("sequelize");
 const { getModels } = require("../../../db/models");
+const { CacheService } = require("../../../shared/redisClient");
 const config = require("../../../config");
 const moviraSesProvider = require("./sesEmailProvider");
 const domainSenderResolver = require("./domainSenderResolver");
@@ -13,17 +14,23 @@ function providerUseCase(kind) {
 async function findProvider({ locationId, useCase }) {
   const { CrmProviderConfig } = getModels();
   if (!locationId) return null;
-  const rows = await CrmProviderConfig.findAll({
-    where: {
-      locationId: Number(locationId),
-      channel: "email",
-      isActive: true,
-      domain: { [Op.in]: [useCase, "both"] },
-    },
-    order: [["priority", "ASC"], ["createdAt", "ASC"]],
-    limit: 1,
+  let configs = await CacheService.getCache('crm:config:providers:all');
+  if (!configs) {
+    configs = await CrmProviderConfig.findAll({ raw: true });
+    if (configs) await CacheService.setCache('crm:config:providers:all', configs);
+  }
+  
+  const matches = (configs || []).filter(c => 
+    c.locationId === Number(locationId) &&
+    c.channel === "email" &&
+    c.isActive === true &&
+    (c.domain === useCase || c.domain === "both")
+  );
+  matches.sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority - b.priority;
+    return new Date(a.createdAt) - new Date(b.createdAt);
   });
-  return rows[0] || null;
+  return matches[0] || null;
 }
 
 async function sendTransactionalEmail(input = {}) {
@@ -53,13 +60,13 @@ async function sendEmail(input = {}) {
 async function findProviderById(id) {
   const { CrmProviderConfig } = getModels();
   if (!id) return null;
-  return CrmProviderConfig.findOne({
-    where: {
-      id,
-      channel: "email",
-      isActive: true,
-    },
-  });
+  let configs = await CacheService.getCache('crm:config:providers:all');
+  if (!configs) {
+    configs = await CrmProviderConfig.findAll({ raw: true });
+    if (configs) await CacheService.setCache('crm:config:providers:all', configs);
+  }
+  
+  return (configs || []).find(c => c.id === id && c.channel === "email" && c.isActive === true) || null;
 }
 
 async function sendWithProviderRow(providerRow, input = {}, useCase = providerUseCase(providerRow?.domain)) {
