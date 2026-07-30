@@ -14,11 +14,11 @@ function providerUseCase(kind) {
 async function findProvider({ locationId, useCase }) {
   const { CrmProviderConfig } = getModels();
   if (!locationId) return null;
-  let configs = await CacheService.getCache('crm:config:providers:all');
-  if (!configs) {
-    configs = await CrmProviderConfig.findAll({ raw: true });
-    if (configs) await CacheService.setCache('crm:config:providers:all', configs);
-  }
+  const configs = await CacheService.getCache(
+    'crm:config:providers:all',
+    () => CrmProviderConfig.findAll({ raw: true })
+  );
+
   
   const matches = (configs || []).filter(c => 
     c.locationId === Number(locationId) &&
@@ -60,11 +60,11 @@ async function sendEmail(input = {}) {
 async function findProviderById(id) {
   const { CrmProviderConfig } = getModels();
   if (!id) return null;
-  let configs = await CacheService.getCache('crm:config:providers:all');
-  if (!configs) {
-    configs = await CrmProviderConfig.findAll({ raw: true });
-    if (configs) await CacheService.setCache('crm:config:providers:all', configs);
-  }
+  const configs = await CacheService.getCache(
+    'crm:config:providers:all',
+    () => CrmProviderConfig.findAll({ raw: true })
+  );
+
   
   return (configs || []).find(c => c.id === id && c.channel === "email" && c.isActive === true) || null;
 }

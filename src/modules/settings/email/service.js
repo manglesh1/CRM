@@ -23,11 +23,11 @@ const ROUTE_DEFINITIONS = [
 async function getEmailSettings({ locationId }) {
   const { CrmProviderConfig, CrmEmailDomain, CrmEmailDomainRoute, CrmSenderWarmupProfile } = getModels();
   const scopedWhere = locationId ? { locationId: Number(locationId) } : {};
-  let configs = await CacheService.getCache('crm:config:providers:all');
-  if (!configs) {
-    configs = await CrmProviderConfig.findAll({ raw: true });
-    if (configs) await CacheService.setCache('crm:config:providers:all', configs);
-  }
+  const configs = await CacheService.getCache(
+    'crm:config:providers:all',
+    () => CrmProviderConfig.findAll({ raw: true })
+  );
+
   
   const providers = (configs || []).filter(c => 
     c.channel === "email" &&
@@ -210,11 +210,11 @@ async function deleteDomain(id) {
   try {
     let providerConfig = null;
     if (row.providerConfigId) {
-      let configs = await CacheService.getCache('crm:config:providers:all');
-      if (!configs) {
-        configs = await CrmProviderConfig.findAll({ raw: true });
-        if (configs) await CacheService.setCache('crm:config:providers:all', configs);
-      }
+      const configs = await CacheService.getCache(
+        'crm:config:providers:all',
+        () => CrmProviderConfig.findAll({ raw: true })
+      );
+
       providerConfig = (configs || []).find(c => c.id === row.providerConfigId) || null;
     }
     await providerDomain.deleteDomainIdentity({
@@ -274,11 +274,11 @@ async function verifyDomain(id) {
   }
   let providerConfig = null;
   if (row.providerConfigId) {
-    let configs = await CacheService.getCache('crm:config:providers:all');
-    if (!configs) {
-      configs = await CrmProviderConfig.findAll({ raw: true });
-      if (configs) await CacheService.setCache('crm:config:providers:all', configs);
-    }
+    const configs = await CacheService.getCache(
+      'crm:config:providers:all',
+      () => CrmProviderConfig.findAll({ raw: true })
+    );
+
     providerConfig = (configs || []).find(c => c.id === row.providerConfigId) || null;
   }
   let identity;
@@ -479,11 +479,11 @@ function humanizeFieldKey(key) {
 
 async function testProvider(id, body = {}) {
   const { CrmProviderConfig } = getModels();
-  let configs = await CacheService.getCache('crm:config:providers:all');
-  if (!configs) {
-    configs = await CrmProviderConfig.findAll({ raw: true });
-    if (configs) await CacheService.setCache('crm:config:providers:all', configs);
-  }
+  const configs = await CacheService.getCache(
+    'crm:config:providers:all',
+    () => CrmProviderConfig.findAll({ raw: true })
+  );
+
   const row = (configs || []).find(c => c.id === id) || null;
   if (!row) {
     const err = new Error("Provider not found");
@@ -519,22 +519,20 @@ async function testProvider(id, body = {}) {
       lastTestError: err?.message || "Provider test failed.",
     });
   }
-  let configs = await CacheService.getCache('crm:config:providers:all');
-  if (!configs) {
-    configs = await CrmProviderConfig.findAll({ raw: true });
-    if (configs) await CacheService.setCache('crm:config:providers:all', configs);
-  }
+  const configs = await CacheService.getCache(
+    'crm:config:providers:all',
+    () => CrmProviderConfig.findAll({ raw: true })
+  );
   const row = (configs || []).find(c => c.id === id) || null;
   return serializeProvider(row);
 }
 
 async function deleteProvider(id) {
   const { CrmProviderConfig } = getModels();
-  let configs = await CacheService.getCache('crm:config:providers:all');
-  if (!configs) {
-    configs = await CrmProviderConfig.findAll({ raw: true });
-    if (configs) await CacheService.setCache('crm:config:providers:all', configs);
-  }
+  const configs = await CacheService.getCache(
+    'crm:config:providers:all',
+    () => CrmProviderConfig.findAll({ raw: true })
+  );
   const row = (configs || []).find(c => c.id === id) || null;
   if (!row) return false;
   await row.update({ isActive: false });

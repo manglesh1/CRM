@@ -20,15 +20,33 @@ redis.on('connect', () => {
 });
 
 class CrmCacheService {
-  static async getCache(key) {
-    if (redis.status !== 'ready') return null;
-    try {
-      const data = await redis.get(key);
-      return data ? JSON.parse(data) : null;
-    } catch (err) {
-      console.error(`[CRM Redis] getCache error for key ${key}:`, err);
-      return null;
+  /**
+   * Get an object from cache, with an optional DB fallback.
+   * If a fallbackFn is provided and the cache is empty, it will be called
+   * automatically, the result will be stored in cache, and then returned.
+   * @param {string} key
+   * @param {Function|null} fallbackFn - async function that returns DB data
+   * @param {number} ttlSeconds - TTL for the cached value (default 24h)
+   * @returns {Promise<Object|null>}
+   */
+  static async getCache(key, fallbackFn = null, ttlSeconds = 86400) {
+    if (redis.status === 'ready') {
+      try {
+        const data = await redis.get(key);
+        if (data) return JSON.parse(data);
+      } catch (err) {
+        console.error(`[CRM Redis] getCache error for key ${key}:`, err);
+      }
     }
+    // Cache miss or Redis unavailable — use fallback if provided
+    if (fallbackFn) {
+      const freshData = await fallbackFn();
+      if (freshData !== null && freshData !== undefined) {
+        await CrmCacheService.setCache(key, freshData, ttlSeconds);
+      }
+      return freshData;
+    }
+    return null;
   }
 
   static async setCache(key, value, ttlSeconds = 86400) {
