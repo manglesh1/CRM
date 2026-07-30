@@ -1687,6 +1687,37 @@ async function deleteContact(id, query = {}) {
   return data;
 }
 
+async function deleteMoviraContact(input = {}) {
+  const models = getModels();
+  const locationId = requireLocation(input.locationId);
+  const customerId = cleanString(
+    input.customerId || input.externalId || input.sourceRefId,
+    160
+  );
+  if (!customerId) throw badRequest("customerId is required");
+
+  const identity = await models.CrmContactIdentity.findOne({
+    where: {
+      locationId,
+      provider: "movira",
+      externalType: "guest",
+      externalId: customerId,
+    },
+  });
+  if (!identity) {
+    return { deleted: false, reason: "contact_not_found", customerId, locationId };
+  }
+  const contact = await models.CrmContact.findOne({
+    where: { id: identity.contactId, locationId },
+  });
+  if (!contact) {
+    await identity.destroy();
+    return { deleted: false, reason: "contact_not_found", customerId, locationId };
+  }
+  const deleted = await deleteContact(contact.id, { locationId });
+  return { deleted: true, customerId, locationId, contact: deleted };
+}
+
 module.exports = {
   upsertContact,
   listContacts,
@@ -1713,6 +1744,7 @@ module.exports = {
   getContactExportFile,
   processContactExportJob,
   deleteContact,
+  deleteMoviraContact,
   getContact,
   updateContact,
   processMoviraCustomerWebhook,

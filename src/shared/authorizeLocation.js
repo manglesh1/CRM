@@ -1,8 +1,5 @@
 const config = require("../config");
 
-const CACHE_TTL_MS = 60 * 1000;
-const accessCache = new Map();
-
 function normalizeLocationId(value) {
   if (value === undefined || value === null || value === "") return null;
   const id = Number(value);
@@ -18,24 +15,6 @@ function extractLocationId(req) {
   );
 }
 
-function cacheKey({ userId, locationId, action }) {
-  return `${userId}:${locationId || "none"}:${action || "crm:read"}`;
-}
-
-function readCache(key) {
-  const hit = accessCache.get(key);
-  if (!hit) return null;
-  if (hit.expiresAt < Date.now()) {
-    accessCache.delete(key);
-    return null;
-  }
-  return hit.value;
-}
-
-function writeCache(key, value) {
-  accessCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
-}
-
 async function askCoreAuthorization({ user, locationId, action, req }) {
   const userId = Number(user?.id || user?.user_id);
   if (!userId) {
@@ -43,10 +22,6 @@ async function askCoreAuthorization({ user, locationId, action, req }) {
     err.statusCode = 401;
     throw err;
   }
-
-  const key = cacheKey({ userId, locationId, action });
-  const cached = readCache(key);
-  if (cached) return cached;
 
   const url = `${config.integrations.coreApiBaseUrl}/internal/crm/authorize`;
   const response = await fetch(url, {
@@ -79,7 +54,6 @@ async function askCoreAuthorization({ user, locationId, action, req }) {
     payload,
   };
 
-  writeCache(key, result);
   return result;
 }
 
