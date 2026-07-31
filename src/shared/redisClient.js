@@ -69,19 +69,28 @@ class CrmCacheService {
 
   static async clearCachePattern(pattern) {
     if (redis.status !== 'ready') return;
-    try {
-      const stream = redis.scanStream({ match: pattern, count: 100 });
-      stream.on('data', async (keys) => {
-        if (keys.length) {
-          const pipeline = redis.pipeline();
-          keys.forEach((key) => pipeline.del(key));
-          await pipeline.exec();
-        }
-      });
-      stream.on('end', () => {});
-    } catch (err) {
-      console.error(`[CRM Redis] clearCachePattern error for pattern ${pattern}:`, err);
-    }
+    return new Promise((resolve) => {
+      try {
+        const stream = redis.scanStream({ match: pattern, count: 100 });
+        stream.on('data', async (keys) => {
+          if (keys.length) {
+            stream.pause();
+            const pipeline = redis.pipeline();
+            keys.forEach((key) => pipeline.del(key));
+            await pipeline.exec();
+            stream.resume();
+          }
+        });
+        stream.on('end', () => resolve());
+        stream.on('error', (err) => {
+          console.error(`[CRM Redis] clearCachePattern error for pattern ${pattern}:`, err);
+          resolve();
+        });
+      } catch (err) {
+        console.error(`[CRM Redis] clearCachePattern error for pattern ${pattern}:`, err);
+        resolve();
+      }
+    });
   }
 }
 
