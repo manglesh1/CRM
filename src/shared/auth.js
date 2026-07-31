@@ -33,6 +33,7 @@ module.exports = function auth(req, res, next) {
     req.user = jwt.verify(token, process.env.JWT_SECRET);
     return next();
   } catch (err) {
+    console.log("JWT VERIFY FAILED:", err.message, "Token:", token, "Secret:", process.env.JWT_SECRET);
     if (err.name === "TokenExpiredError") {
       return res.status(401).json({
         success: false,
