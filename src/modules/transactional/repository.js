@@ -23,6 +23,17 @@ async function markQueued(message, enqueueResult) {
   });
 }
 
+async function markEnqueueFailed(message, error) {
+  const errorCode = String(error?.name || error?.Code || error?.code || "unknown_error")
+    .replace(/[^a-zA-Z0-9_.-]/g, "_")
+    .slice(0, 120);
+  return message.update({
+    status: STATUS.ENQUEUE_SKIPPED,
+    queuedAt: null,
+    lastError: `queue_error:${errorCode}`,
+  });
+}
+
 async function findMessageById(id) {
   const { TransactionalMessage } = getModels();
   return TransactionalMessage.findByPk(id);
@@ -188,6 +199,7 @@ module.exports = {
   findByIdempotencyKey,
   createMessage,
   markQueued,
+  markEnqueueFailed,
   findMessageById,
   findTemplate,
   markSending,

@@ -11,14 +11,45 @@ function shouldProcessInline(enqueue) {
   return process.env.NODE_ENV !== "production";
 }
 
-function shouldRecoverSkippedMessage(message) {
+function shouldRecoverMessage(message) {
+  if (message?.status === STATUS.PENDING) return true;
   return (
     message?.status === STATUS.ENQUEUE_SKIPPED &&
-    message?.lastError === "missing_queue_url" &&
-    (process.env.TRANSACTIONAL_INLINE_ON_MISSING_QUEUE === "true" ||
-      (process.env.TRANSACTIONAL_INLINE_ON_MISSING_QUEUE !== "false" &&
-        process.env.NODE_ENV !== "production"))
+    (String(message?.lastError || "").startsWith("queue_error:") ||
+      (message?.lastError === "missing_queue_url" &&
+        (process.env.TRANSACTIONAL_INLINE_ON_MISSING_QUEUE === "true" ||
+          (process.env.TRANSACTIONAL_INLINE_ON_MISSING_QUEUE !== "false" &&
+            process.env.NODE_ENV !== "production"))))
   );
+}
+
+function queueUnavailableError(error) {
+  const providerCode = String(error?.name || error?.Code || error?.code || "unknown_error")
+    .replace(/[^a-zA-Z0-9_.-]/g, "_")
+    .slice(0, 120);
+  const wrapped = new Error(
+    `Transactional email queue is unavailable (${providerCode}). ` +
+      "Check the EC2 IAM role and SQS queue configuration."
+  );
+  wrapped.statusCode = 503;
+  wrapped.code = "transactional_queue_unavailable";
+  wrapped.cause = error;
+  return wrapped;
+}
+
+async function enqueueOrReportFailure(message) {
+  try {
+    const enqueue = await enqueueTransactionalMessage({
+      messageId: message.id,
+      channel: message.channel,
+      priority: message.priority,
+    });
+    const updated = await repository.markQueued(message, enqueue);
+    return { enqueue, updated };
+  } catch (error) {
+    await repository.markEnqueueFailed(message, error);
+    throw queueUnavailableError(error);
+  }
 }
 
 async function processInline(message) {
@@ -45,7 +76,19 @@ async function enqueueMessage(body) {
 
   const existing = await repository.findByIdempotencyKey(validation.value.idempotencyKey);
   if (existing) {
-    if (shouldRecoverSkippedMessage(existing)) {
+    if (shouldRecoverMessage(existing)) {
+      if (
+        existing.status === STATUS.PENDING ||
+        String(existing.lastError || "").startsWith("queue_error:")
+      ) {
+        const recovered = await enqueueOrReportFailure(existing);
+        return {
+          duplicate: false,
+          message: recovered.updated,
+          enqueue: recovered.enqueue,
+          recovered: true,
+        };
+      }
       const inline = await processInline(existing);
       return {
         duplicate: false,
@@ -78,12 +121,7 @@ async function enqueueMessage(body) {
       };
     }
   }
-  const enqueue = await enqueueTransactionalMessage({
-    messageId: message.id,
-    channel: message.channel,
-    priority: message.priority,
-  });
-  const updated = await repository.markQueued(message, enqueue);
+  const { enqueue, updated } = await enqueueOrReportFailure(message);
 
   if (shouldProcessInline(enqueue)) {
     const inline = await processInline(updated);
@@ -107,4 +145,8 @@ async function enqueueMessage(body) {
 
 module.exports = {
   enqueueMessage,
+  _internal: {
+    shouldRecoverMessage,
+    queueUnavailableError,
+  },
 };
