@@ -1,13 +1,24 @@
-// Shared JWT auth middleware. Validates tokens issued by aeroSportsAdmin
-// using the same JWT_SECRET (kept in sync via .env). The admin frontend
-// (my-admin-app) calls this service directly with its bearer token.
-//
-// We don't have access to the UserSession DB row here, so this is a
-// pure JWT-only check — no session-store fallback like aeroSportsAdmin.
-
 const jwt = require("jsonwebtoken");
+const config = require("../config");
 
-module.exports = function auth(req, res, next) {
+async function verifyWithCore(token) {
+  const response = await fetch(
+    `${config.integrations.coreApiBaseUrl}/internal/crm/verify-token`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-internal-api-secret": config.internalApiSecret,
+      },
+      body: JSON.stringify({ token }),
+    }
+  );
+  if (!response.ok) return null;
+  const payload = await response.json();
+  return payload?.data || null;
+}
+
+module.exports = async function auth(req, res, next) {
   const authHeader = req.headers["authorization"];
   if (!authHeader) {
     return res.status(401).json({
@@ -18,19 +29,12 @@ module.exports = function auth(req, res, next) {
     });
   }
 
-  if (!process.env.JWT_SECRET) {
-    return res.status(500).json({
-      success: false,
-      message: "Server configuration error: JWT_SECRET missing.",
-    });
-  }
-
   const token = authHeader.startsWith("Bearer ")
     ? authHeader.slice("Bearer ".length).trim()
     : authHeader.trim();
 
   try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = jwt.verify(token, config.jwtSecret);
     return next();
   } catch (err) {
     console.log("JWT VERIFY FAILED:", err.message, "Token:", token, "Secret:", process.env.JWT_SECRET);
@@ -43,11 +47,20 @@ module.exports = function auth(req, res, next) {
         expiredAt: err.expiredAt,
       });
     }
+    try {
+      const claims = await verifyWithCore(token);
+      if (claims) {
+        req.user = claims;
+        return next();
+      }
+    } catch (coreError) {
+      req.log?.warn?.({ err: coreError }, "Core token verification unavailable");
+    }
     return res.status(401).json({
       success: false,
       statusCode: 401,
       message: "Invalid token. Please login again.",
-      error: err.message,
+      error: "InvalidToken",
     });
   }
 };

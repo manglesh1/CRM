@@ -703,6 +703,29 @@ function renderDesign(designJson, options = {}) {
   const sections = Array.isArray(design.sections) ? design.sections : [];
   const mobileCss = buildMobileCss(sections);
   const customCss = safeCustomCss(settings.customCss || "");
+  const frameWidth = px(settings.contentWidth, 600);
+  const frameBorderWidth = Number(settings.containerBorderWidth);
+  const hasFrame = Number.isFinite(frameBorderWidth) && frameBorderWidth > 0;
+  const renderedSections = sections
+    .map((section) => renderSection(section, settings, options.data || {}))
+    .join("");
+  const framedContent = hasFrame
+    ? `
+      <tr>
+        <td align="center" style="padding:${px(settings.containerMarginTop, 24)}px 12px ${px(settings.containerMarginBottom, 24)}px;">
+          <table class="mframe" role="presentation" width="${frameWidth}" cellspacing="0" cellpadding="0" border="0" style="${styleObj({
+            width: `${frameWidth}px`,
+            "max-width": "100%",
+            background: settings.bodyColor,
+            border: `${frameBorderWidth}px solid ${settings.containerBorderColor || settings.dividerColor}`,
+            "border-radius": `${px(settings.containerBorderRadius, 16)}px`,
+            overflow: "hidden",
+          })}">
+            ${renderedSections}
+          </table>
+        </td>
+      </tr>`
+    : renderedSections;
   const html = applyTracking(`<!doctype html>
 <html>
   <head>
@@ -713,7 +736,7 @@ function renderDesign(designJson, options = {}) {
   </head>
   <body style="margin:0;padding:0;background:${escapeAttr(settings.backgroundColor)};">
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background:${escapeAttr(settings.backgroundColor)};">
-      ${sections.map((section) => renderSection(section, settings, options.data || {})).join("")}
+      ${framedContent}
     </table>
   </body>
 </html>`, options.tracking || null);
@@ -727,6 +750,7 @@ function buildMobileCss(sections) {
   const rules = [
     // Shrink the content table to viewport width.
     "table.mcontent{width:100% !important;max-width:100% !important;}",
+    "table.mframe{width:100% !important;max-width:100% !important;}",
     // Stack any column whose section opted into mobileStack.
     ".mcol-stack{display:block !important;width:100% !important;max-width:100% !important;box-sizing:border-box !important;}",
     // Images can never bleed outside the column on mobile.
