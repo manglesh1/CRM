@@ -21,27 +21,68 @@ router.post(
       }
       console.log(`[CRM] Request to generate AI plan: year=${year}, location=${locationId}`);
 
-      // 1. Get city from aeroSportsAdmin API (simulate for prototype)
-      let city = "Brampton";
-      let state = "ON";
-      if (locationId === 2) city = "Scarborough";
-      if (locationId === 3) city = "St. Catharines";
+      // 1. Get park details from Database using raw query (CRM model doesn't map Location directly)
+      const [locations] = await db.sequelize.query(
+        `SELECT * FROM parks WHERE "locationId" = :locationId LIMIT 1`,
+        { replacements: { locationId } }
+      );
+      const location = locations && locations.length > 0 ? locations[0] : null;
+      if (!location) {
+        return res.status(404).json({ error: "Location not found." });
+      }
+
+      const crypto = require("crypto");
+      const requestId = crypto.randomUUID();
+      
+      const payload = {
+        requestId,
+        organizationId: location.organizationId,
+        locationId: location.locationId,
+        parkDetails: {
+          name: location.legalBusinessName,
+          city: location.townOrCity,
+          state: location.stateOrProvince,
+          country: location.country,
+          timezone: location.timezone,
+          currency: location.currency,
+          website: location.website,
+        },
+        schoolDistrictCalendarUrls: [
+          ...(location.schoolDistrictCalendarUrls ? location.schoolDistrictCalendarUrls.split('\n').map(u => u.trim()) : []),
+          location.schoolDistrictCalendarPdfUrl
+        ].filter(Boolean),
+        year,
+        agentVersion: "1.1",
+        schemaVersion: "1.1"
+      };
 
       // 2. Call calendarAgent microservice on port 5005
       const agentRes = await fetch("http://localhost:5005/generate-yearly-plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ year, city, state }),
+        body: JSON.stringify(payload),
       });
 
       if (!agentRes.ok) {
-        throw new Error(`calendarAgent returned status ${agentRes.status}`);
+        let errorMsg = `calendarAgent returned status ${agentRes.status}`;
+        try {
+          const errorData = await agentRes.json();
+          if (errorData && errorData.error) {
+            errorMsg += `: ${errorData.error}`;
+          }
+        } catch (e) {}
+        throw new Error(errorMsg);
       }
       
       const planData = await agentRes.json();
       
       if (!planData || !planData.plan) {
         throw new Error("Invalid plan data received from calendarAgent.");
+      }
+
+      // 2.5 Strict validation of Response Contract
+      if (planData.requestId !== requestId || planData.locationId !== locationId) {
+        throw new Error("Response contract violation: mismatching requestId or locationId.");
       }
 
       const { plan } = planData;
