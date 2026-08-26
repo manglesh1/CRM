@@ -7,7 +7,9 @@ const calendarRoutes = require("./calendar/routes");
 
 const router = express.Router();
 
-router.get("/overview", auth, authorizeLocation({ action: "crm:marketing" }), (_req, res) => {
+router.use(auth);
+router.use(authorizeLocation({ action: "crm:marketing" }));
+router.get("/overview", (_req, res) => {
   res.json({
     success: true,
     data: {
