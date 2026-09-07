@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageMoviraSesSendingIdentities",
+      "Effect": "Allow",
+      "Action": [
+        "ses:CreateEmailIdentity",
+        "ses:GetEmailIdentity",
+        "ses:PutEmailIdentityMailFromAttributes",
+        "ses:DeleteEmailIdentity"
+      ],
+      "Resource": "arn:aws:ses:ca-central-1:072508717210:identity/*"
+    }
+  ]
+}

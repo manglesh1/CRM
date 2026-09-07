@@ -45,11 +45,14 @@ async function refreshMoviraSes(domain, identityName) {
 
 async function createCustomerSesIdentity(providerConfig, domain) {
   const client = customerSesClient(providerConfig);
-  const created = await client.send(
-    new CreateEmailIdentityCommand({
-      EmailIdentity: domain,
-    })
-  );
+  const existing = await getCustomerSesIdentityIfExists(client, domain);
+  const created = existing
+    ? { IdentityArn: existing.providerIdentityArn }
+    : await client.send(
+        new CreateEmailIdentityCommand({
+          EmailIdentity: domain,
+        })
+      );
   await putCustomerMailFrom(client, domain);
   const identity = await getCustomerSesIdentity(client, domain);
   return {
@@ -59,6 +62,17 @@ async function createCustomerSesIdentity(providerConfig, domain) {
     dnsRecords: buildSesRecords(domain, identity),
     providerVerified: Boolean(identity.verifiedForSendingStatus),
   };
+}
+
+async function getCustomerSesIdentityIfExists(client, domain) {
+  try {
+    return await getCustomerSesIdentity(client, domain);
+  } catch (err) {
+    if (err?.name === "NotFoundException" || err?.$metadata?.httpStatusCode === 404) {
+      return null;
+    }
+    throw err;
+  }
 }
 
 async function refreshCustomerSes(providerConfig, domain, identityName) {

@@ -39,12 +39,20 @@ test("CRM authorization preserves billing suspension instead of reporting locati
   });
 });
 
-test("CRM authorization distinguishes role permission failures", () => {
+test("CRM authorization gives settings users an actionable permission message", () => {
   const failure = _internal.authorizationFailure({
     statusCode: 403,
-    payload: { data: { crmPermission: { reason: "permission_denied" } } },
-  });
+    payload: {
+      data: {
+        crmPermission: {
+          reason: "permission_denied",
+          rule: { permission: "crm.settings.write" },
+        },
+      },
+    },
+  }, "crm:settings:write");
 
   assert.equal(failure.error, "crm_permission_denied");
-  assert.match(failure.message, /role does not have permission/i);
+  assert.equal(failure.requiredPermission, "crm.settings.write");
+  assert.match(failure.message, /Manage CRM settings/i);
 });

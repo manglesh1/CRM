@@ -67,7 +67,7 @@ async function askCoreAuthorization({ user, locationId, action, req }) {
   return result;
 }
 
-function authorizationFailure(result = {}) {
+function authorizationFailure(result = {}, action = "") {
   const statusCode = Number(result.statusCode) || 403;
   const reason =
     result.payload?.data?.reason ||
@@ -97,10 +97,16 @@ function authorizationFailure(result = {}) {
     };
   }
   if (["permission_denied", "ui_access_denied", "permission_not_configured", "ui_not_configured"].includes(reason)) {
+    const isSettingsWrite = String(action).toLowerCase() === "crm:settings:write";
     return {
       statusCode: 403,
       error: "crm_permission_denied",
-      message: "Your role does not have permission to perform this CRM action.",
+      message: isSettingsWrite
+        ? "Your account can view CRM settings, but it cannot change them. Ask your park owner or administrator to grant the Manage CRM settings permission."
+        : "Your account does not have permission to make this CRM change. Ask your park owner or administrator for access.",
+      ...(result.payload?.data?.crmPermission?.rule?.permission
+        ? { requiredPermission: result.payload.data.crmPermission.rule.permission }
+        : {}),
     };
   }
   return {
@@ -133,7 +139,8 @@ module.exports = function authorizeLocation(options = {}) {
       });
 
       if (!result.allowed) {
-        const failure = authorizationFailure(result);
+        const requestedAction = typeof action === "function" ? action(req) : action;
+        const failure = authorizationFailure(result, requestedAction);
         req.log?.warn?.(
           {
             action: typeof action === "function" ? action(req) : action,
@@ -151,6 +158,10 @@ module.exports = function authorizeLocation(options = {}) {
           success: false,
           error: failure.error,
           message: failure.message,
+          action: requestedAction,
+          ...(failure.requiredPermission
+            ? { requiredPermission: failure.requiredPermission }
+            : {}),
         });
       }
 

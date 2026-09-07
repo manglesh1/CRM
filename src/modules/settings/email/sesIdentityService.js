@@ -35,11 +35,17 @@ async function createIdentity(domain) {
     throw err;
   }
 
-  const created = await getClient().send(
-    new CreateEmailIdentityCommand({
-      EmailIdentity: domain,
-    })
-  );
+  // A previous request may have created the SES identity but failed before
+  // CRM persisted it (for example while setting MAIL FROM). Reuse that
+  // identity instead of requiring a second CreateEmailIdentity call.
+  const existing = await getIdentityIfExists(domain);
+  const created = existing
+    ? { IdentityArn: existing.providerIdentityArn }
+    : await getClient().send(
+        new CreateEmailIdentityCommand({
+          EmailIdentity: domain,
+        })
+      );
 
   await putMailFrom(domain);
   const identity = await getIdentity(domain);
@@ -50,6 +56,17 @@ async function createIdentity(domain) {
     mailFromDomain: mailFromDomain(domain),
     dnsRecords: buildRecordsFromIdentity(domain, identity),
   };
+}
+
+async function getIdentityIfExists(domain) {
+  try {
+    return await getIdentity(domain);
+  } catch (err) {
+    if (err?.name === "NotFoundException" || err?.$metadata?.httpStatusCode === 404) {
+      return null;
+    }
+    throw err;
+  }
 }
 
 async function getIdentity(domain) {

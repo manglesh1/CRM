@@ -68,13 +68,21 @@ test("customer SES provider sends transactional metadata tags", async () => {
 });
 
 function mockSesIdentityProvisioning(seenCommands) {
+  let created = false;
   mock.method(SESv2Client.prototype, "send", async (command) => {
     seenCommands.push(command);
     if (command instanceof CreateEmailIdentityCommand) {
+      created = true;
       return { IdentityArn: "arn:aws:ses:ca-central-1:123456789012:identity/example.test" };
     }
     if (command instanceof PutEmailIdentityMailFromAttributesCommand) return {};
     if (command instanceof GetEmailIdentityCommand) {
+      if (!created) {
+        const error = new Error("Identity not found");
+        error.name = "NotFoundException";
+        error.$metadata = { httpStatusCode: 404 };
+        throw error;
+      }
       return {
         VerifiedForSendingStatus: false,
         DkimAttributes: { Tokens: ["dkim-token"] },
@@ -94,6 +102,31 @@ test("Movira SES domain provisioning does not require TagResource permission", a
   const createCommand = seenCommands.find((command) => command instanceof CreateEmailIdentityCommand);
   assert.equal(createCommand.input.EmailIdentity, "example.test");
   assert.equal(Object.hasOwn(createCommand.input, "Tags"), false);
+});
+
+test("Movira SES provisioning resumes an identity created by an earlier partial attempt", async () => {
+  const seenCommands = [];
+  mock.method(SESv2Client.prototype, "send", async (command) => {
+    seenCommands.push(command);
+    if (command instanceof GetEmailIdentityCommand) {
+      return {
+        IdentityArn: "arn:aws:ses:ca-central-1:123456789012:identity/example.test",
+        VerifiedForSendingStatus: false,
+        DkimAttributes: { Tokens: ["existing-token"] },
+        MailFromAttributes: { MailFromDomain: "email.example.test" },
+      };
+    }
+    if (command instanceof PutEmailIdentityMailFromAttributesCommand) return {};
+    throw new Error(`Unexpected SES command: ${command.constructor.name}`);
+  });
+
+  const result = await sesIdentityService.createIdentity("example.test");
+
+  assert.equal(result.providerIdentityName, "example.test");
+  assert.equal(
+    seenCommands.some((command) => command instanceof CreateEmailIdentityCommand),
+    false
+  );
 });
 
 test("customer SES domain provisioning does not require TagResource permission", async () => {
