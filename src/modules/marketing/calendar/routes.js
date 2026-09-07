@@ -34,8 +34,9 @@ router.get("/", async (req, res, next) => {
     });
     res.json(result);
   } catch (err) {
+    console.error("ROUTE ERROR:", err);
     if (err.statusCode) return sendError(res, err);
-    return next(err);
+    res.status(500).json({ success: false, error: err.stack || err.message });
   }
 });
 
@@ -81,6 +82,7 @@ router.put("/:id", async (req, res, next) => {
 });
 
 router.delete("/:id", async (req, res, next) => {
+  console.log("DELETE CALENDAR PLAN: id=", req.params.id, "locationId=", locationFrom(req));
   try {
     const result = await service.deletePlan({
       id: req.params.id,
@@ -88,6 +90,7 @@ router.delete("/:id", async (req, res, next) => {
     });
     res.json(result);
   } catch (err) {
+    console.error("DELETE CALENDAR PLAN ERROR:", err);
     if (err.statusCode) return sendError(res, err);
     return next(err);
   }
