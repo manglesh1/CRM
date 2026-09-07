@@ -48,7 +48,6 @@ async function createCustomerSesIdentity(providerConfig, domain) {
   const created = await client.send(
     new CreateEmailIdentityCommand({
       EmailIdentity: domain,
-      Tags: [{ Key: "managed_by", Value: "movira_crm" }],
     })
   );
   await putCustomerMailFrom(client, domain);

@@ -25,3 +25,26 @@ test("CRM rejects conflicting header and query location context", () => {
     (error) => error.code === "location_scope_mismatch" && error.statusCode === 400
   );
 });
+
+test("CRM authorization preserves billing suspension instead of reporting location denial", () => {
+  const failure = _internal.authorizationFailure({
+    statusCode: 402,
+    payload: { data: { reason: "billing_suspended" } },
+  });
+
+  assert.deepEqual(failure, {
+    statusCode: 402,
+    error: "crm_billing_suspended",
+    message: "CRM access is paused for this location because billing is suspended.",
+  });
+});
+
+test("CRM authorization distinguishes role permission failures", () => {
+  const failure = _internal.authorizationFailure({
+    statusCode: 403,
+    payload: { data: { crmPermission: { reason: "permission_denied" } } },
+  });
+
+  assert.equal(failure.error, "crm_permission_denied");
+  assert.match(failure.message, /role does not have permission/i);
+});

@@ -1,7 +1,14 @@
 const assert = require("node:assert/strict");
 const { afterEach, mock, test } = require("node:test");
-const { SESv2Client } = require("@aws-sdk/client-sesv2");
+const {
+  SESv2Client,
+  CreateEmailIdentityCommand,
+  GetEmailIdentityCommand,
+  PutEmailIdentityMailFromAttributesCommand,
+} = require("@aws-sdk/client-sesv2");
 const { sendWithProviderRow } = require("../src/modules/messaging-core/providers/emailProviderRouter");
+const sesIdentityService = require("../src/modules/settings/email/sesIdentityService");
+const providerDomainService = require("../src/modules/settings/email/providerDomainService");
 const providerEventsService = require("../src/modules/webhooks/providerEventsService");
 const sesWebhookService = require("../src/modules/webhooks/sesService");
 const marketingTrackingService = require("../src/modules/marketing/tracking/service");
@@ -58,6 +65,56 @@ test("customer SES provider sends transactional metadata tags", async () => {
     { Name: "template_id", Value: "tpl_1" },
     { Name: "location_id", Value: "15" },
   ]);
+});
+
+function mockSesIdentityProvisioning(seenCommands) {
+  mock.method(SESv2Client.prototype, "send", async (command) => {
+    seenCommands.push(command);
+    if (command instanceof CreateEmailIdentityCommand) {
+      return { IdentityArn: "arn:aws:ses:ca-central-1:123456789012:identity/example.test" };
+    }
+    if (command instanceof PutEmailIdentityMailFromAttributesCommand) return {};
+    if (command instanceof GetEmailIdentityCommand) {
+      return {
+        VerifiedForSendingStatus: false,
+        DkimAttributes: { Tokens: ["dkim-token"] },
+        MailFromAttributes: { MailFromDomain: "email.example.test" },
+      };
+    }
+    throw new Error(`Unexpected SES command: ${command.constructor.name}`);
+  });
+}
+
+test("Movira SES domain provisioning does not require TagResource permission", async () => {
+  const seenCommands = [];
+  mockSesIdentityProvisioning(seenCommands);
+
+  await sesIdentityService.createIdentity("example.test");
+
+  const createCommand = seenCommands.find((command) => command instanceof CreateEmailIdentityCommand);
+  assert.equal(createCommand.input.EmailIdentity, "example.test");
+  assert.equal(Object.hasOwn(createCommand.input, "Tags"), false);
+});
+
+test("customer SES domain provisioning does not require TagResource permission", async () => {
+  const seenCommands = [];
+  mockSesIdentityProvisioning(seenCommands);
+
+  await providerDomainService.createDomainIdentity({
+    provider: "customer_ses",
+    providerConfig: {
+      encryptedConfig: {
+        region: "ca-central-1",
+        accessKeyId: "AKIA_TEST",
+        secretAccessKey: "secret",
+      },
+    },
+    domain: "example.test",
+  });
+
+  const createCommand = seenCommands.find((command) => command instanceof CreateEmailIdentityCommand);
+  assert.equal(createCommand.input.EmailIdentity, "example.test");
+  assert.equal(Object.hasOwn(createCommand.input, "Tags"), false);
 });
 
 test("SendGrid provider sends custom args used by the Event Webhook", async () => {

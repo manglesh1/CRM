@@ -67,6 +67,49 @@ async function askCoreAuthorization({ user, locationId, action, req }) {
   return result;
 }
 
+function authorizationFailure(result = {}) {
+  const statusCode = Number(result.statusCode) || 403;
+  const reason =
+    result.payload?.data?.reason ||
+    result.payload?.data?.crmPermission?.reason ||
+    result.payload?.error ||
+    "authorization_denied";
+
+  if (statusCode === 401) {
+    return {
+      statusCode: 401,
+      error: "invalid_session",
+      message: "Your session could not be verified. Please sign in again.",
+    };
+  }
+  if (statusCode === 402 || reason === "billing_suspended") {
+    return {
+      statusCode: 402,
+      error: "crm_billing_suspended",
+      message: "CRM access is paused for this location because billing is suspended.",
+    };
+  }
+  if (reason === "crm_module_not_enabled") {
+    return {
+      statusCode: 403,
+      error: reason,
+      message: "CRM is not enabled for this location.",
+    };
+  }
+  if (["permission_denied", "ui_access_denied", "permission_not_configured", "ui_not_configured"].includes(reason)) {
+    return {
+      statusCode: 403,
+      error: "crm_permission_denied",
+      message: "Your role does not have permission to perform this CRM action.",
+    };
+  }
+  return {
+    statusCode: 403,
+    error: "location_access_denied",
+    message: "You do not have access to the selected CRM location.",
+  };
+}
+
 module.exports = function authorizeLocation(options = {}) {
   const action = options.action || "crm:read";
   const requireLocation = options.requireLocation === true;
@@ -90,10 +133,24 @@ module.exports = function authorizeLocation(options = {}) {
       });
 
       if (!result.allowed) {
-        return res.status(result.statusCode === 401 ? 401 : 403).json({
+        const failure = authorizationFailure(result);
+        req.log?.warn?.(
+          {
+            action: typeof action === "function" ? action(req) : action,
+            locationId,
+            reason:
+              result.payload?.data?.reason ||
+              result.payload?.data?.crmPermission?.reason ||
+              result.payload?.error ||
+              null,
+            coreStatusCode: result.statusCode,
+          },
+          "CRM authorization denied"
+        );
+        return res.status(failure.statusCode).json({
           success: false,
-          error: "location_access_denied",
-          message: "You do not have access to this CRM location.",
+          error: failure.error,
+          message: failure.message,
         });
       }
 
@@ -130,6 +187,7 @@ module.exports = function authorizeLocation(options = {}) {
 };
 
 module.exports._internal = {
+  authorizationFailure,
   extractLocationId,
   normalizeLocationId,
 };
