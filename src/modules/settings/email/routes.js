@@ -16,6 +16,9 @@ function sendError(res, err) {
     success: false,
     error: err.message,
     errors: err.errors || [],
+    ...(err.code ? { code: err.code } : {}),
+    ...(err.details ? { details: err.details } : {}),
+    ...(err.requiredActions ? { requiredActions: err.requiredActions } : {}),
   });
 }
 

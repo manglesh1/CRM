@@ -1,8 +1,8 @@
 "use strict";
 
 // Canonical designs for the transactional system templates. Builds each
-// template's visual design (brand orange palette — one shade per family — and a
-// compact layout) from src/modules/transactional/systemTemplateDesigns.js.
+// template's visual design (canonical Movira360 blue/cyan palette and a
+// compact event-specific layout) from src/modules/transactional/systemTemplateDesigns.js.
 // Idempotent: only touches system rows (locationId IS NULL AND isSystem = true)
 // and re-runs safely on every `db:seed:all` (seederStorage is 'none').
 const {

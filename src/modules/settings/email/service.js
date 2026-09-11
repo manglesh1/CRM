@@ -130,8 +130,32 @@ async function createDomain(body = {}) {
   try {
     identity = await providerDomain.createDomainIdentity({ provider, providerConfig, domain });
   } catch (err) {
-    const wrapped = new Error(`Domain setup failed: ${err?.message || "unknown error"}`);
-    wrapped.statusCode = err?.statusCode || 502;
+    const deniedAction = String(err?.message || "").match(
+      /not authorized to perform:\s*(ses:[A-Za-z0-9]+)/i
+    )?.[1];
+    const isSesPermissionDenied =
+      provider === "movira_ses" &&
+      (deniedAction || err?.name === "AccessDeniedException" || err?.name === "AccessDenied");
+    const message = isSesPermissionDenied
+      ? `Movira SES domain provisioning is unavailable because the service role is missing ${deniedAction || "a required SES permission"}.`
+      : `Domain setup failed: ${err?.message || "unknown error"}`;
+    const wrapped = new Error(message);
+    wrapped.statusCode = isSesPermissionDenied ? 503 : (err?.statusCode || 502);
+    wrapped.code = isSesPermissionDenied
+      ? "SES_DOMAIN_PROVISIONING_PERMISSION_DENIED"
+      : (err?.code || "DOMAIN_SETUP_FAILED");
+    wrapped.details = isSesPermissionDenied ? err?.message : undefined;
+    wrapped.requiredActions = isSesPermissionDenied
+      ? [
+          "ses:CreateEmailIdentity",
+          "ses:GetEmailIdentity",
+          "ses:PutEmailIdentityMailFromAttributes",
+          "ses:DeleteEmailIdentity",
+        ]
+      : undefined;
+    wrapped.errors = isSesPermissionDenied
+      ? [{ field: "provider", message }]
+      : (err?.errors || []);
     throw wrapped;
   }
 

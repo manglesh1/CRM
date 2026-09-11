@@ -1,0 +1,92 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+
+const {
+  BRAND,
+  buildTransactionalSystemDesign,
+  buildTransactionalPlainText,
+} = require("../src/modules/transactional/systemTemplateDesigns");
+const {
+  renderTemplate,
+  normalizePayload,
+} = require("../src/modules/transactional/templateRenderer");
+
+const CASES = [
+  ["bookingConfirmation", "booking", "Booking details"],
+  ["giftcard-received", "giftcard", "Gift card details"],
+  ["membership-suspended", "membership", "Membership status"],
+  ["saasOnboardingStarted", "saas", "Workspace access"],
+  ["saasInvoicePaid", "saas", "Payment receipt"],
+];
+
+test("system transactional designs use the global Movira360 frame and event content", () => {
+  for (const [key, family, expectedTitle] of CASES) {
+    const design = buildTransactionalSystemDesign({
+      key,
+      family,
+      name: key,
+      defaults: {
+        heading: "A useful event heading",
+        paragraph: "Hi {{guestName}}, this event has useful details.",
+      },
+    });
+    const serialized = JSON.stringify(design);
+
+    assert.equal(design.settings.containerBorderWidth, 0.5);
+    assert.equal(design.settings.containerBorderColor, BRAND.border);
+    assert.equal(design.settings.buttonColor, BRAND.primary);
+    assert.match(serialized, /Movira360/);
+    assert.match(serialized, new RegExp(expectedTitle));
+    assert.match(serialized, /Powered by/);
+    assert.match(buildTransactionalPlainText({ key, family }), /Powered by Movira360/);
+  }
+});
+
+test("transactional payload aliases preserve onboarding names and branding", () => {
+  const payload = normalizePayload({
+    customerName: "Asha Patel",
+    locationName: "Sky Park",
+    business: { email: "hello@sky.example" },
+  });
+
+  assert.equal(payload.guestName, "Asha Patel");
+  assert.equal(payload.venueName, "Sky Park");
+  assert.equal(payload.locationEmail, "hello@sky.example");
+  assert.match(payload.moviraLogoUrl, /^https:\/\//);
+});
+
+test("rendered onboarding email has full frame, logo colors and no unresolved core aliases", () => {
+  const designJson = buildTransactionalSystemDesign({
+    key: "saasOnboardingStarted",
+    family: "saas",
+    name: "SaaS onboarding started",
+    defaults: {
+      heading: "Your Movira workspace is ready",
+      paragraph: "Hi {{guestName}}, {{venueName}} onboarding has started.",
+    },
+  });
+  const rendered = renderTemplate(
+    {
+      name: "SaaS onboarding started",
+      subject: "Welcome {{guestName}} to {{venueName}}",
+      editorType: "design",
+      designJson,
+      plainText: "Hi {{guestName}} — {{venueName}}\nPowered by Movira360",
+    },
+    {
+      customerName: "Asha Patel",
+      locationName: "Sky Park",
+      onboardingPhase: "Park workspace",
+      organizationName: "Sky Group",
+      modules: "bookings, crm",
+      loginUrl: "https://app.movira360.com/login",
+    }
+  );
+
+  assert.equal(rendered.subject, "Welcome Asha Patel to Sky Park");
+  assert.match(rendered.body, /class="mframe"/);
+  assert.match(rendered.body, /border:0\.5px solid/);
+  assert.match(rendered.body, new RegExp(BRAND.primary.replace("#", ""), "i"));
+  assert.match(rendered.body, /Powered by/);
+  assert.doesNotMatch(rendered.body, /\{\{\s*(guestName|venueName)\s*\}\}/);
+});

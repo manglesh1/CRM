@@ -1,8 +1,5 @@
 const config = require("../config");
 
-const CACHE_TTL_MS = 60 * 1000;
-const accessCache = new Map();
-
 function normalizeLocationId(value) {
   if (value === undefined || value === null || value === "") return null;
   const id = Number(value);
@@ -10,30 +7,22 @@ function normalizeLocationId(value) {
 }
 
 function extractLocationId(req) {
-  return normalizeLocationId(
-    req.body?.locationId ||
-      req.query?.locationId ||
-      req.params?.locationId ||
-      req.headers["x-location-id"]
-  );
-}
-
-function cacheKey({ userId, locationId, action }) {
-  return `${userId}:${locationId || "none"}:${action || "crm:read"}`;
-}
-
-function readCache(key) {
-  const hit = accessCache.get(key);
-  if (!hit) return null;
-  if (hit.expiresAt < Date.now()) {
-    accessCache.delete(key);
-    return null;
+  const locationIds = [
+    req.headers["x-location-id"],
+    req.params?.locationId,
+    req.body?.locationId,
+    req.query?.locationId,
+  ]
+    .map(normalizeLocationId)
+    .filter(Boolean);
+  const uniqueLocationIds = [...new Set(locationIds)];
+  if (uniqueLocationIds.length > 1) {
+    const err = new Error("Request location values do not match.");
+    err.statusCode = 400;
+    err.code = "location_scope_mismatch";
+    throw err;
   }
-  return hit.value;
-}
-
-function writeCache(key, value) {
-  accessCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
+  return uniqueLocationIds[0] || null;
 }
 
 async function askCoreAuthorization({ user, locationId, action, req }) {
@@ -43,10 +32,6 @@ async function askCoreAuthorization({ user, locationId, action, req }) {
     err.statusCode = 401;
     throw err;
   }
-
-  const key = cacheKey({ userId, locationId, action });
-  const cached = readCache(key);
-  if (cached) return cached;
 
   const url = `${config.integrations.coreApiBaseUrl}/internal/crm/authorize`;
   const response = await fetch(url, {
@@ -79,8 +64,56 @@ async function askCoreAuthorization({ user, locationId, action, req }) {
     payload,
   };
 
-  writeCache(key, result);
   return result;
+}
+
+function authorizationFailure(result = {}, action = "") {
+  const statusCode = Number(result.statusCode) || 403;
+  const reason =
+    result.payload?.data?.reason ||
+    result.payload?.data?.crmPermission?.reason ||
+    result.payload?.error ||
+    "authorization_denied";
+
+  if (statusCode === 401) {
+    return {
+      statusCode: 401,
+      error: "invalid_session",
+      message: "Your session could not be verified. Please sign in again.",
+    };
+  }
+  if (statusCode === 402 || reason === "billing_suspended") {
+    return {
+      statusCode: 402,
+      error: "crm_billing_suspended",
+      message: "CRM access is paused for this location because billing is suspended.",
+    };
+  }
+  if (reason === "crm_module_not_enabled") {
+    return {
+      statusCode: 403,
+      error: reason,
+      message: "CRM is not enabled for this location.",
+    };
+  }
+  if (["permission_denied", "ui_access_denied", "permission_not_configured", "ui_not_configured"].includes(reason)) {
+    const isSettingsWrite = String(action).toLowerCase() === "crm:settings:write";
+    return {
+      statusCode: 403,
+      error: "crm_permission_denied",
+      message: isSettingsWrite
+        ? "Your account can view CRM settings, but it cannot change them. Ask your park owner or administrator to grant the Manage CRM settings permission."
+        : "Your account does not have permission to make this CRM change. Ask your park owner or administrator for access.",
+      ...(result.payload?.data?.crmPermission?.rule?.permission
+        ? { requiredPermission: result.payload.data.crmPermission.rule.permission }
+        : {}),
+    };
+  }
+  return {
+    statusCode: 403,
+    error: "location_access_denied",
+    message: "You do not have access to the selected CRM location.",
+  };
 }
 
 module.exports = function authorizeLocation(options = {}) {
@@ -106,17 +139,54 @@ module.exports = function authorizeLocation(options = {}) {
       });
 
       if (!result.allowed) {
-        return res.status(result.statusCode === 401 ? 401 : 403).json({
+        const requestedAction = typeof action === "function" ? action(req) : action;
+        const failure = authorizationFailure(result, requestedAction);
+        req.log?.warn?.(
+          {
+            action: typeof action === "function" ? action(req) : action,
+            locationId,
+            reason:
+              result.payload?.data?.reason ||
+              result.payload?.data?.crmPermission?.reason ||
+              result.payload?.error ||
+              null,
+            coreStatusCode: result.statusCode,
+          },
+          "CRM authorization denied"
+        );
+        return res.status(failure.statusCode).json({
           success: false,
-          error: "location_access_denied",
-          message: "You do not have access to this CRM location.",
+          error: failure.error,
+          message: failure.message,
+          action: requestedAction,
+          ...(failure.requiredPermission
+            ? { requiredPermission: failure.requiredPermission }
+            : {}),
         });
       }
 
       req.crmAuthz = result.payload?.data || {};
       req.crmLocationId = locationId;
+      if (locationId) {
+        req.query = { ...(req.query || {}), locationId };
+        if (
+          req.body &&
+          typeof req.body === "object" &&
+          !Array.isArray(req.body) &&
+          !Buffer.isBuffer(req.body)
+        ) {
+          req.body.locationId = locationId;
+        }
+      }
       return next();
     } catch (err) {
+      if (err.statusCode === 400) {
+        return res.status(400).json({
+          success: false,
+          error: err.code || "invalid_location_context",
+          message: err.message,
+        });
+      }
       req.log?.error?.({ err }, "CRM authorization failed");
       return res.status(err.statusCode || 503).json({
         success: false,
@@ -125,4 +195,10 @@ module.exports = function authorizeLocation(options = {}) {
       });
     }
   };
+};
+
+module.exports._internal = {
+  authorizationFailure,
+  extractLocationId,
+  normalizeLocationId,
 };

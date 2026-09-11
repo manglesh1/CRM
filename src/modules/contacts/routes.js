@@ -1,11 +1,54 @@
 const express = require("express");
 const auth = require("../../shared/auth");
 const authorizeLocation = require("../../shared/authorizeLocation");
+const internalAuth = require("../../shared/internalAuth");
 const service = require("./service");
 const auditService = require("../audit/service");
 const queueJobs = require("../queueJobs/service");
 
 const router = express.Router();
+
+router.post("/internal/sync", internalAuth, async (req, res, next) => {
+  try {
+    const data = await service.processMoviraCustomerWebhook(req.body || {});
+    if (Number(data.job?.errorCount || 0) > 0) {
+      return res.status(422).json({
+        success: false,
+        error: "customer_sync_rejected",
+        message: data.job?.lastError || "CRM rejected the customer sync row.",
+        data,
+      });
+    }
+    const locationId =
+      data.job?.locationId || req.body?.locationId || req.body?.location_id;
+    data.automation = await queueJobs.enqueueAutomationEvents(
+      data.automationEvents || [],
+      { locationId, source: "core_customer_sync" }
+    );
+    data.segmentRefresh = await queueJobs.enqueueSegmentRefreshForLocation(
+      locationId,
+      {
+        source: "core_customer_sync",
+        syncRunId: data.job?.id,
+      }
+    );
+    return res.status(202).json({ success: true, data });
+  } catch (err) {
+    if (err.statusCode) return sendError(res, err);
+    return next(err);
+  }
+});
+
+router.post("/internal/delete", internalAuth, async (req, res, next) => {
+  try {
+    const data = await service.deleteMoviraContact(req.body || {});
+    return res.json({ success: true, data });
+  } catch (err) {
+    if (err.statusCode) return sendError(res, err);
+    return next(err);
+  }
+});
+
 router.use(auth, authorizeLocation({
   action: (req) => {
     if (req.method === "DELETE") return "crm:contacts:delete";

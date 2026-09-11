@@ -160,7 +160,43 @@ async function ingestEvent(body) {
   };
 }
 
-async function listBindings(query = {}) {
+function assertBindingScope(binding, scope = {}) {
+  if (scope.isSuperAdmin) return binding;
+  const requestedLocationId = Number(scope.locationId);
+  const bindingLocationId =
+    binding?.locationId === null || binding?.locationId === undefined
+      ? null
+      : Number(binding.locationId);
+  if (
+    !Number.isInteger(requestedLocationId) ||
+    requestedLocationId <= 0 ||
+    bindingLocationId !== requestedLocationId
+  ) {
+    throw httpError(403, "Binding does not belong to the selected park.", {
+      code: "binding_location_access_denied",
+    });
+  }
+  return binding;
+}
+
+function scopedBindingLocation(body, scope = {}) {
+  if (scope.isSuperAdmin) return body;
+  const requestedLocationId = Number(scope.locationId);
+  const bodyLocationId = Number(body?.locationId);
+  if (
+    !Number.isInteger(requestedLocationId) ||
+    requestedLocationId <= 0 ||
+    !Number.isInteger(bodyLocationId) ||
+    bodyLocationId !== requestedLocationId
+  ) {
+    throw httpError(403, "Bindings can only be managed for the selected park.", {
+      code: "binding_location_access_denied",
+    });
+  }
+  return body;
+}
+
+async function listBindings(query = {}, scope = {}) {
   const filter = {
     eventType: query.eventType || undefined,
     channel: query.channel || undefined,
@@ -172,16 +208,18 @@ async function listBindings(query = {}) {
         ? null
         : Number(query.locationId);
   }
+  if (!scope.isSuperAdmin) filter.locationId = Number(scope.locationId);
   return repository.listBindings(filter);
 }
 
-async function getBinding(id) {
+async function getBinding(id, scope = {}) {
   const binding = await repository.findBindingById(id);
   if (!binding) throw httpError(404, "Binding not found");
-  return binding;
+  return assertBindingScope(binding, scope);
 }
 
-async function createBinding(body) {
+async function createBinding(body, scope = {}) {
+  scopedBindingLocation(body, scope);
   const validation = validateBindingInput(body);
   if (!validation.ok) throw httpError(400, validation.errors.join("; "));
 
@@ -212,8 +250,14 @@ async function createBinding(body) {
   }
 }
 
-async function updateBinding(id, body) {
-  const binding = await getBinding(id);
+async function updateBinding(id, body, scope = {}) {
+  const binding = await getBinding(id, scope);
+  if (
+    !scope.isSuperAdmin &&
+    Object.prototype.hasOwnProperty.call(body || {}, "locationId")
+  ) {
+    scopedBindingLocation(body, scope);
+  }
   const validation = validateBindingInput({ ...binding.toJSON(), ...body }, { partial: true });
   if (!validation.ok) throw httpError(400, validation.errors.join("; "));
 
@@ -233,8 +277,8 @@ async function updateBinding(id, body) {
   return updated;
 }
 
-async function deleteBinding(id) {
-  const binding = await getBinding(id);
+async function deleteBinding(id, scope = {}) {
+  const binding = await getBinding(id, scope);
   await repository.deleteBinding(binding);
   await safeAudit({
     locationId: binding.locationId,
@@ -259,4 +303,8 @@ module.exports = {
   updateBinding,
   deleteBinding,
   listEvents,
+  _internal: {
+    assertBindingScope,
+    scopedBindingLocation,
+  },
 };

@@ -18,27 +18,82 @@ function interpolate(input, payload) {
   });
 }
 
+function normalizePayload(payload = {}) {
+  const contact = payload.contact || {};
+  const business = payload.business || {};
+  const booking = payload.booking || {};
+  const payment = payload.payment || {};
+  const waiver = payload.waiver || {};
+  const guestName =
+    payload.guestName ||
+    payload.customerName ||
+    contact.fullName ||
+    payload.name ||
+    "Customer";
+  const venueName =
+    payload.venueName ||
+    payload.locationName ||
+    business.name ||
+    "Movira";
+
+  return {
+    ...payload,
+    guestName,
+    guestFirstName:
+      payload.guestFirstName ||
+      contact.firstName ||
+      String(guestName).trim().split(/\s+/)[0] ||
+      "Customer",
+    venueName,
+    locationAddress: payload.locationAddress || business.address || "",
+    locationPhone: payload.locationPhone || business.phone || "",
+    locationEmail: payload.locationEmail || business.email || "",
+    bookingNumber: payload.bookingNumber || booking.number || "",
+    bookingName: payload.bookingName || booking.name || "",
+    bookingDate: payload.bookingDate || booking.date || "",
+    totalAmount: payload.totalAmount || booking.total || "",
+    amountPaid: payload.amountPaid || payment.amount || "",
+    amountDue: payload.amountDue || payment.amountDue || payment.balance || "",
+    gateway: payload.gateway || payment.gateway || "",
+    paymentLink: payload.paymentLink || payment.link || "",
+    receiptUrl: payload.receiptUrl || booking.receiptUrl || "",
+    ticketsUrl: payload.ticketsUrl || booking.ticketsUrl || "",
+    qrCodeUrl: payload.qrCodeUrl || booking.qrCodeUrl || "",
+    waiverShareUrl:
+      payload.waiverShareUrl || payload.waiverLink || waiver.shareUrl || "",
+    moviraLogoUrl:
+      payload.moviraLogoUrl ||
+      process.env.MOVIRA360_EMAIL_LOGO_URL ||
+      "https://app.movira360.com/branding/movira360-mark.png",
+    movira360Url:
+      payload.movira360Url ||
+      process.env.MOVIRA360_PUBLIC_URL ||
+      "https://www.movira360.com",
+  };
+}
+
 function renderTemplate(template, payload, { tracking = null } = {}) {
-  const subject = interpolate(template.subject, payload);
+  const normalizedPayload = normalizePayload(payload);
+  const subject = interpolate(template.subject, normalizedPayload);
 
   if (template.editorType === "design") {
     const rendered = renderDesign(template.designJson || createDefaultDesign(), {
       title: template.name,
-      data: payload || {},
+      data: normalizedPayload,
       tracking,
     });
     return {
       subject,
       body: rendered.html,
-      text: interpolate(template.plainText, payload),
+      text: interpolate(template.plainText, normalizedPayload),
       template,
     };
   }
 
   return {
     subject,
-    body: applyTracking(interpolate(template.body, payload), tracking),
-    text: interpolate(template.plainText, payload),
+    body: applyTracking(interpolate(template.body, normalizedPayload), tracking),
+    text: interpolate(template.plainText, normalizedPayload),
     template,
   };
 }
@@ -63,4 +118,5 @@ module.exports = {
   renderTransactionalMessage,
   renderTemplate,
   interpolate,
+  normalizePayload,
 };
