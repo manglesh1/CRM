@@ -21,6 +21,7 @@ const marketingMessageRepository = require("./messageRepository");
 const suppressionService = require("./suppressionService");
 const contactService = require("../../contacts/service");
 const queueJobs = require("../../queueJobs/service");
+const dripService = require("./dripService");
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -1061,6 +1062,7 @@ function serializeCampaign(row) {
     status: row.status,
     scheduledAt: row.scheduledAt,
     executionDate: row.executionDate,
+    dripSteps: row.dripSteps || [],
     metrics: {
       recipients: row.totalRecipients,
       delivered: row.totalDelivered,
@@ -1300,7 +1302,8 @@ async function preflightCampaignMessages(campaignId, body = {}) {
   const invalid = recipientInput
     .map((item, index) => ({ index, email: recipientEmail(item) }))
     .filter((item) => !EMAIL_RE.test(item.email));
-  const templateId = body.templateId || campaign.templateId;
+  const dripSteps = await prepareDripCampaign(campaign, body, { persist: false });
+  const templateId = dripSteps?.[0]?.templateId || body.templateId || campaign.templateId;
   const checks = [];
   let template = null;
   let templateValidation = null;
@@ -1462,6 +1465,59 @@ function campaignSendOptions(body = {}) {
   };
 }
 
+function campaignQueueType(campaign) {
+  return campaign?.campaignType === "workflow_campaign" ? "journey" : "bulk";
+}
+
+function cleanDripSteps(input) {
+  if (!Array.isArray(input)) return [];
+  return input.slice(0, 30).map((step, index) => {
+    const type = ["email", "wait", "condition"].includes(step?.type) ? step.type : "email";
+    if (type === "email") return {
+      id: String(step.id || `email_${index + 1}`).slice(0, 80),
+      type,
+      templateId: step.templateId || null,
+      subject: step.subject ? String(step.subject).trim().slice(0, 500) : null,
+    };
+    if (type === "condition") return {
+      id: String(step.id || `condition_${index + 1}`).slice(0, 80),
+      type,
+      event: step.event === "clicked" ? "clicked" : "opened",
+      timeoutAmount: Math.min(365, Math.max(1, Number(step.timeoutAmount) || 1)),
+      timeoutUnit: ["minutes", "hours", "days"].includes(step.timeoutUnit) ? step.timeoutUnit : "days",
+      onTimeout: step.onTimeout === "stop" ? "stop" : "continue",
+    };
+    return {
+      id: String(step.id || `wait_${index + 1}`).slice(0, 80),
+      type,
+      amount: Math.min(365, Math.max(1, Number(step.amount) || 1)),
+      unit: ["minutes", "hours", "days"].includes(step.unit) ? step.unit : "days",
+    };
+  });
+}
+
+async function prepareDripCampaign(campaign, body = {}, { persist = true } = {}) {
+  if (campaign.campaignType !== "workflow_campaign") return null;
+  const steps = cleanDripSteps(body.dripSteps?.length ? body.dripSteps : campaign.dripSteps);
+  const emailSteps = steps.filter((step) => step.type === "email");
+  validate([
+    steps.length === 0 && { field: "dripSteps", message: "Add at least two email steps to this drip campaign." },
+    steps[0]?.type !== "email" && { field: "dripSteps", message: "A drip campaign must start with an email step." },
+    emailSteps.length < 2 && { field: "dripSteps", message: "A drip campaign needs at least two email steps." },
+    emailSteps.some((step) => !step.templateId) && { field: "dripSteps", message: "Choose a template for every drip email step." },
+  ]);
+  const { CrmMarketingTemplate } = getModels();
+  const templateIds = Array.from(new Set(emailSteps.map((step) => step.templateId)));
+  const templates = await CrmMarketingTemplate.findAll({ where: { id: { [Op.in]: templateIds }, locationId: campaign.locationId } });
+  validate([
+    templates.length !== templateIds.length && { field: "dripSteps", message: "One or more drip templates are unavailable for this location." },
+    templates.some((template) => template.useCase === "transactional") && { field: "dripSteps", message: "Transactional templates cannot be used in a marketing drip." },
+    templates.some((template) => !analyzeTemplateCompliance(template).ok) && { field: "dripSteps", message: "Every drip template must contain a valid unsubscribe link." },
+  ]);
+  if (persist) await campaign.update({ dripSteps: steps, templateId: emailSteps[0].templateId });
+  return steps;
+}
+
 async function validateCampaignQueueContext(campaign, body = {}, recipients = []) {
   const { CrmMarketingTemplate } = getModels();
   const templateId = body.templateId || campaign.templateId;
@@ -1511,8 +1567,14 @@ async function createCampaignAudienceJob(campaign, body = {}) {
     },
   ]);
 
-  const { templateId } = await validateCampaignQueueContext(campaign, body, []);
-  const sendOptions = campaignSendOptions(body);
+  const dripSteps = await prepareDripCampaign(campaign, body);
+  const effectiveBody = dripSteps ? { ...body, templateId: dripSteps[0].templateId } : body;
+  const { templateId } = await validateCampaignQueueContext(campaign, effectiveBody, []);
+  const sendOptions = {
+    ...campaignSendOptions(body),
+    queueType: campaignQueueType(campaign),
+    ...(dripSteps ? { dripSteps } : {}),
+  };
   const job = await CrmMarketingCampaignAudienceJob.create({
     locationId: campaign.locationId,
     campaignId: campaign.id,
@@ -1560,13 +1622,22 @@ async function queueCampaignMessages(campaignId, body = {}) {
     campaign.status === "cancelled" && { field: "status", message: "Cancelled campaigns cannot be queued." },
   ]);
 
+  if (campaign.campaignType === "workflow_campaign" && Object.prototype.hasOwnProperty.call(body, "scheduledAt")) {
+    const scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null;
+    validate([
+      scheduledAt && Number.isNaN(scheduledAt.getTime()) && { field: "scheduledAt", message: "Choose a valid drip start date and time." },
+    ]);
+    await campaign.update({ scheduledAt });
+  }
+
   if (hasAudienceSelection(body)) {
     return createCampaignAudienceJob(campaign, body);
   }
 
   const recipientInput = Array.isArray(body.recipients) ? body.recipients : [];
   const recipients = normalizeRecipients(recipientInput);
-  const templateId = body.templateId || campaign.templateId;
+  const dripSteps = await prepareDripCampaign(campaign, body);
+  const templateId = dripSteps?.[0]?.templateId || body.templateId || campaign.templateId;
   validate([
     !templateId && { field: "templateId", message: "Choose a template before queueing a campaign." },
     recipients.length === 0 && { field: "recipients", message: "At least one recipient is required." },
@@ -1574,9 +1645,9 @@ async function queueCampaignMessages(campaignId, body = {}) {
     recipients.length > 500 && { field: "recipients", message: "Queue at most 500 recipients per request." },
   ]);
 
-  const { globalData } = await validateCampaignQueueContext(campaign, body, recipients);
+  const { globalData } = await validateCampaignQueueContext(campaign, { ...body, templateId }, recipients);
 
-  const queueType = body.queueType === "journey" ? "journey" : "bulk";
+  const queueType = campaignQueueType(campaign);
   const allowResend = body.allowResend === true;
   const queued = [];
   const suppressed = [];
@@ -1602,7 +1673,7 @@ async function queueCampaignMessages(campaignId, body = {}) {
       continue;
     }
 
-    if (!allowResend) {
+    if (!allowResend && !dripSteps) {
       const existingMessage = await findExistingCampaignRecipient(campaign.id, recipient.email);
       if (existingMessage) {
         existing.push({
@@ -1627,6 +1698,21 @@ async function queueCampaignMessages(campaignId, body = {}) {
       from: body.from || undefined,
       subject: recipient.subject || body.subject || undefined,
     };
+    if (dripSteps) {
+      const result = await dripService.enrollRecipient({
+        campaign,
+        recipient: recipient.email,
+        data: payload.data,
+        steps: dripSteps,
+        sendOptions: { from: body.from || null, subject: body.subject || null },
+      });
+      if (!result.created) {
+        existing.push({ email: recipient.email, enrollmentId: result.enrollment.id, status: result.enrollment.status });
+        continue;
+      }
+      queued.push({ id: result.enrollment.id, recipient: recipient.email, status: "enrolled", drip: true });
+      continue;
+    }
     const message = await marketingMessageRepository.createMessage({
       locationId: campaign.locationId,
       campaignId: campaign.id,
@@ -1685,6 +1771,9 @@ async function retryCampaignMessage(messageId, body = {}) {
   const { CrmMarketingMessage, CrmMarketingTemplate, CrmMarketingCampaign } = getModels();
   const message = await CrmMarketingMessage.findByPk(messageId);
   if (!message) throw notFound("Marketing message");
+  const campaign = message.campaignId
+    ? await CrmMarketingCampaign.findByPk(message.campaignId)
+    : null;
   if (message.channel !== "email") {
     validate([{ field: "channel", message: "Only email marketing messages can be retried." }]);
   }
@@ -1733,8 +1822,8 @@ async function retryCampaignMessage(messageId, body = {}) {
   ]);
 
   const currentMetadata = message.metadata || {};
-  const queueType = body.queueType === "journey" || body.queueType === "bulk"
-    ? body.queueType
+  const queueType = campaign
+    ? campaignQueueType(campaign)
     : currentMetadata.queueType || "bulk";
   const retryCount = Number(currentMetadata.retryCount || 0) + 1;
   const previousStatus = message.status;
@@ -1771,7 +1860,6 @@ async function retryCampaignMessage(messageId, body = {}) {
   });
 
   if (updated.campaignId) {
-    const campaign = await CrmMarketingCampaign.findByPk(updated.campaignId);
     if (campaign && campaign.status !== "sending") {
       await campaign.update({
         status: "sending",
@@ -1847,6 +1935,7 @@ async function pauseCampaign(id, body = {}) {
   await campaign.update({
     status: "paused",
   });
+  if (campaign.campaignType === "workflow_campaign") await dripService.pauseCampaignEnrollments(campaign.id);
   return {
     campaign: serializeCampaign(campaign),
     action: "paused",
@@ -1869,10 +1958,14 @@ async function resumeCampaign(id, body = {}) {
     status: nextStatus,
     executionDate: campaign.executionDate || new Date(),
   });
+  const resumedEnrollments = campaign.campaignType === "workflow_campaign"
+    ? await dripService.resumeCampaignEnrollments(campaign.id)
+    : 0;
   return {
     campaign: serializeCampaign(campaign),
     action: "resumed",
     reason: body.reason || null,
+    resumedEnrollments,
   };
 }
 
@@ -1914,10 +2007,13 @@ async function cancelCampaign(id, body = {}) {
     });
   }
   await campaign.update({ status: "cancelled" });
+  const cancelledEnrollments = campaign.campaignType === "workflow_campaign"
+    ? await dripService.cancelCampaignEnrollments(campaign.id, reason)
+    : 0;
   return {
     campaign: serializeCampaign(campaign),
     action: "cancelled",
-    totalCancelled: cancellableMessages.length,
+    totalCancelled: cancellableMessages.length + cancelledEnrollments,
     reason,
   };
 }
@@ -2153,6 +2249,9 @@ async function processCampaignAudienceBatch(job) {
   const models = getModels();
   const audience = job.audience || {};
   const sendOptions = job.sendOptions || {};
+  const dripSteps = sendOptions.queueType === "journey"
+    ? cleanDripSteps(sendOptions.dripSteps)
+    : [];
   const batchSize = Math.min(1000, Math.max(50, Number(sendOptions.batchSize || 500)));
   const campaign = await models.CrmMarketingCampaign.findOne({ where: { id: job.campaignId, locationId: job.locationId } });
   if (!campaign) throw notFound("Campaign");
@@ -2165,6 +2264,7 @@ async function processCampaignAudienceBatch(job) {
     return serializeAudienceJob(updated);
   }
 
+  if (campaign.campaignType === "workflow_campaign") await prepareDripCampaign(campaign, { dripSteps });
   await validateCampaignQueueContext(campaign, { ...sendOptions, templateId: job.templateId }, []);
   if (!job.startedAt) await job.update({ status: "processing", startedAt: new Date(), lastError: null });
   else await job.update({ status: "processing", lastError: null });
@@ -2189,7 +2289,8 @@ async function processCampaignAudienceBatch(job) {
     const finalStatus = Number(job.failedCount || 0) > 0 ? "completed_with_errors" : "completed";
     const updated = await job.update({ status: finalStatus, completedAt: new Date() });
     await campaign.reload();
-    if (campaign.status === "sending") await campaign.update({ status: "sent" });
+    if (campaign.campaignType === "workflow_campaign") await dripService.finishCampaignIfDone(campaign.id);
+    else if (campaign.status === "sending") await campaign.update({ status: "sent" });
     return serializeAudienceJob(updated);
   }
 
@@ -2224,7 +2325,7 @@ async function processCampaignAudienceBatch(job) {
       })
     : [];
   const suppressedEmails = new Set(suppressions.map((row) => String(row.email || "").toLowerCase()));
-  const existingMessages = !sendOptions.allowResend && normalizedEmails.length
+  const existingMessages = campaign.campaignType !== "workflow_campaign" && !sendOptions.allowResend && normalizedEmails.length
     ? await models.CrmMarketingMessage.findAll({
         where: {
           campaignId: campaign.id,
@@ -2253,6 +2354,18 @@ async function processCampaignAudienceBatch(job) {
         from: sendOptions.from || undefined,
         subject: sendOptions.subject || undefined,
       };
+      if (campaign.campaignType === "workflow_campaign") {
+        const enrolled = await dripService.enrollRecipient({
+          campaign,
+          recipient: item.normalizedEmail,
+          data: payload.data,
+          steps: dripSteps,
+          sendOptions: { from: sendOptions.from || null, subject: sendOptions.subject || null },
+        });
+        if (enrolled.created) queuedCount += 1;
+        else duplicateCount += 1;
+        continue;
+      }
       const message = await marketingMessageRepository.createMessage({
         locationId: campaign.locationId,
         campaignId: campaign.id,
@@ -2315,7 +2428,8 @@ async function processCampaignAudienceBatch(job) {
     });
   } else {
     await campaign.reload();
-    if (campaign.status === "sending") await campaign.update({ status: "sent" });
+    if (campaign.campaignType === "workflow_campaign") await dripService.finishCampaignIfDone(campaign.id);
+    else if (campaign.status === "sending") await campaign.update({ status: "sent" });
   }
   return serializeAudienceJob(updated);
 }
@@ -2339,6 +2453,14 @@ async function processCampaignAudienceJob(campaignAudienceJobId) {
   }
 }
 
+async function processDripStep(enrollmentId, stepIndex, retryContext) {
+  return dripService.processDripStep(enrollmentId, stepIndex, retryContext);
+}
+
+async function listCampaignDripEnrollments(campaignId, query) {
+  return dripService.listCampaignEnrollments(campaignId, query);
+}
+
 module.exports = {
   getTemplateBuilderCatalog,
   getMergeTagCatalog,
@@ -2347,6 +2469,8 @@ module.exports = {
   listCampaignAudienceJobs,
   getCampaignAudienceJob,
   processCampaignAudienceJob,
+  processDripStep,
+  listCampaignDripEnrollments,
   // folders
   listFolders,
   createFolder,

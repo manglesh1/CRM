@@ -5,6 +5,7 @@ const { getModels } = require("../../../db/models");
 const config = require("../../../config");
 const moviraSesProvider = require("./sesEmailProvider");
 const domainSenderResolver = require("./domainSenderResolver");
+const replyForwardService = require("../../settings/email/replyForwardService");
 
 function providerUseCase(kind) {
   return kind === "transactional" ? "transactional" : "marketing";
@@ -36,11 +37,29 @@ async function sendMarketingEmail(input = {}) {
 
 async function sendEmail(input = {}) {
   const useCase = providerUseCase(input.useCase);
-  const sender = await domainSenderResolver.resolveSender({ locationId: input.locationId, useCase });
-  const resolvedInput = sender ? { ...input, from: sender.from } : input;
-  const providerRow = sender?.providerConfigId
-    ? await findProviderById(sender.providerConfigId)
+  const [sender, deliverySettings] = await Promise.all([
+    domainSenderResolver.resolveSender({
+      locationId: input.locationId,
+      useCase,
+      requestedFrom: input.from,
+    }),
+    replyForwardService.getOutboundDeliverySettings({ locationId: input.locationId }),
+  ]);
+  const resolvedInput = {
+    ...input,
+    ...(sender ? { from: sender.from } : {}),
+    replyTo: input.replyTo || deliverySettings.replyTo || undefined,
+    bcc: normalizeAddresses(input.bcc?.length ? input.bcc : deliverySettings.bcc),
+  };
+  const providerRow = sender
+    ? (sender.providerConfigId ? await findProviderById(sender.providerConfigId) : null)
     : await findProvider({ locationId: input.locationId, useCase });
+  if (sender?.providerConfigId && !providerRow) {
+    const err = new Error("The selected sender email provider is inactive or unavailable.");
+    err.statusCode = 409;
+    err.code = "SENDER_PROVIDER_UNAVAILABLE";
+    throw err;
+  }
   if (!providerRow || providerRow.provider === "movira_ses") {
     const result = useCase === "transactional"
       ? moviraSesProvider.sendTransactionalEmail(resolvedInput)
@@ -111,7 +130,8 @@ async function sendCustomerSes(providerRow, cfg, input, useCase) {
   const base = {
     FromEmailAddress: fromAddress,
     ConfigurationSetName: input.configurationSet || cfg.configurationSet || undefined,
-    Destination: { ToAddresses: [input.to] },
+    Destination: destinationFor(input.to, input.bcc),
+    ...replyToFor(input.replyTo),
     EmailTags: tags,
   };
   const content = input.attachments?.length
@@ -144,8 +164,14 @@ async function sendSendgrid(providerRow, cfg, input, useCase = providerUseCase(p
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      personalizations: [{ to: [{ email: input.to }] }],
-      from: { email: input.from || cfg.fromEmail || config.aws.ses.defaultFrom },
+      personalizations: [{
+        to: [{ email: input.to }],
+        ...(normalizeAddresses(input.bcc).length
+          ? { bcc: normalizeAddresses(input.bcc).map((email) => ({ email })) }
+          : {}),
+      }],
+      from: sendgridFrom(input.from || cfg.fromEmail || config.aws.ses.defaultFrom),
+      ...(input.replyTo ? { reply_to: { email: input.replyTo } } : {}),
       subject: input.subject || "",
       custom_args: {
         domain: useCase,
@@ -182,6 +208,8 @@ async function sendMailgun(providerRow, cfg, input, useCase) {
   form.append("subject", input.subject || "");
   form.append("html", input.html || input.text || "");
   form.append("text", input.text || stripHtml(input.html || ""));
+  if (input.replyTo) form.append("h:Reply-To", input.replyTo);
+  for (const email of normalizeAddresses(input.bcc)) form.append("bcc", email);
   form.append("v:domain", useCase);
   if (input.messageId) form.append("v:message_id", String(input.messageId));
   for (const tag of input.trackingTags || []) {
@@ -232,6 +260,8 @@ async function sendPostmark(providerRow, cfg, input, useCase) {
     Subject: input.subject || "",
     HtmlBody: input.html || input.text || "",
     TextBody: input.text || stripHtml(input.html || ""),
+    ReplyTo: input.replyTo || undefined,
+    Bcc: normalizeAddresses(input.bcc).join(",") || undefined,
     Metadata: {
       domain: useCase,
       ...(input.messageId ? { message_id: String(input.messageId) } : {}),
@@ -286,11 +316,13 @@ function mailgunApiBase(region) {
     : "https://api.mailgun.net";
 }
 
-function buildRawMime({ from, to, subject, html, text, attachments }) {
+function buildRawMime({ from, to, subject, html, text, attachments, replyTo, bcc }) {
   return new Promise((resolve, reject) => {
     const composer = new MailComposer({
       from,
       to,
+      replyTo: replyTo || undefined,
+      bcc: normalizeAddresses(bcc),
       subject: subject || "",
       html: html || "",
       text: text || stripHtml(html || ""),
@@ -306,6 +338,32 @@ function buildRawMime({ from, to, subject, html, text, attachments }) {
       resolve(message);
     });
   });
+}
+
+function normalizeAddresses(value) {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  return Array.from(new Set(values.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)));
+}
+
+function destinationFor(to, bcc) {
+  const bccAddresses = normalizeAddresses(bcc);
+  return {
+    ToAddresses: [to],
+    ...(bccAddresses.length ? { BccAddresses: bccAddresses } : {}),
+  };
+}
+
+function replyToFor(replyTo) {
+  const addresses = normalizeAddresses(replyTo);
+  return addresses.length ? { ReplyToAddresses: addresses } : {};
+}
+
+function sendgridFrom(value) {
+  const text = String(value || "").trim();
+  const matched = text.match(/^\s*"?([^"<]*)"?\s*<([^<>]+)>\s*$/);
+  return matched
+    ? { email: matched[2].trim(), ...(matched[1].trim() ? { name: matched[1].trim() } : {}) }
+    : { email: text };
 }
 
 function stripHtml(html) {

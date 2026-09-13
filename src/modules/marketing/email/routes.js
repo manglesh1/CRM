@@ -590,6 +590,16 @@ router.get("/campaigns/:id/messages", async (req, res, next) => {
   }
 });
 
+router.get("/campaigns/:id/drip-enrollments", async (req, res, next) => {
+  try {
+    const data = await service.listCampaignDripEnrollments(req.params.id, req.query || {});
+    res.json({ success: true, data });
+  } catch (err) {
+    if (err.statusCode) return sendError(res, err);
+    return next(err);
+  }
+});
+
 router.get("/messages/:id/events", async (req, res, next) => {
   try {
     const data = await service.listMessageEvents(req.params.id);

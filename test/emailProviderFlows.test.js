@@ -34,6 +34,8 @@ const emailInput = {
   html: "<p>Hello</p>",
   text: "Hello",
   messageId: "msg_tx_123",
+  replyTo: "replies@example.test",
+  bcc: ["audit@example.test", "ops@example.test"],
   trackingTags: [
     { name: "template_id", value: "tpl_1" },
     { name: "location_id", value: "15" },
@@ -59,6 +61,8 @@ test("customer SES provider sends transactional metadata tags", async () => {
   assert.equal(result.providerMessageId, "ses-message-id");
   assert.equal(commandInput.ConfigurationSetName, "customer-config-set");
   assert.equal(commandInput.FromEmailAddress, "sender@example.test");
+  assert.deepEqual(commandInput.Destination.BccAddresses, ["audit@example.test", "ops@example.test"]);
+  assert.deepEqual(commandInput.ReplyToAddresses, ["replies@example.test"]);
   assert.deepEqual(commandInput.EmailTags, [
     { Name: "domain", Value: "transactional" },
     { Name: "message_id", Value: "msg_tx_123" },
@@ -173,6 +177,11 @@ test("SendGrid provider sends custom args used by the Event Webhook", async () =
   assert.equal(body.custom_args.message_id, "msg_tx_123");
   assert.equal(body.custom_args.template_id, "tpl_1");
   assert.equal(body.personalizations[0].to[0].email, "guest@example.test");
+  assert.deepEqual(body.personalizations[0].bcc, [
+    { email: "audit@example.test" },
+    { email: "ops@example.test" },
+  ]);
+  assert.deepEqual(body.reply_to, { email: "replies@example.test" });
 });
 
 test("Mailgun provider sends variables used by Mailgun webhooks", async () => {
@@ -199,6 +208,8 @@ test("Mailgun provider sends variables used by Mailgun webhooks", async () => {
   assert.equal(fields["v:domain"], "transactional");
   assert.equal(fields["v:message_id"], "msg_tx_123");
   assert.equal(fields["v:template_id"], "tpl_1");
+  assert.deepEqual(request.options.body.getAll("bcc"), ["audit@example.test", "ops@example.test"]);
+  assert.equal(fields["h:Reply-To"], "replies@example.test");
 });
 
 test("Postmark provider sends metadata used by Postmark webhooks", async () => {
@@ -225,6 +236,8 @@ test("Postmark provider sends metadata used by Postmark webhooks", async () => {
   assert.equal(body.Metadata.domain, "transactional");
   assert.equal(body.Metadata.message_id, "msg_tx_123");
   assert.equal(body.Metadata.template_id, "tpl_1");
+  assert.equal(body.ReplyTo, "replies@example.test");
+  assert.equal(body.Bcc, "audit@example.test,ops@example.test");
 });
 
 test("SendGrid, Mailgun, and Postmark webhooks route events to transactional and marketing tracking", async () => {

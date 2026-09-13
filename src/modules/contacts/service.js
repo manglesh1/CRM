@@ -1065,13 +1065,23 @@ async function bulkUpdateContacts(input = {}) {
     const segment = await models.CrmSegment.findOne({ where: { id: destinationId, locationId } });
     if (!segment) throw notFound("Segment");
     await models.sequelize.transaction(async (transaction) => {
-      for (const contactId of ids) {
-        await models.CrmSegmentMember.findOrCreate({
-          where: { segmentId: segment.id, contactId },
-          defaults: { segmentId: segment.id, contactId, locationId, source: "manual", status: "active", enteredAt: new Date() },
-          transaction,
-        });
-      }
+      const enteredAt = new Date();
+      await models.CrmSegmentMember.update(
+        { source: "manual", status: "active", enteredAt, exitedAt: null },
+        { where: { segmentId: segment.id, contactId: { [Op.in]: ids } }, transaction }
+      );
+      await models.CrmSegmentMember.bulkCreate(
+        ids.map((contactId) => ({
+          segmentId: segment.id,
+          contactId,
+          locationId,
+          source: "manual",
+          status: "active",
+          enteredAt,
+          exitedAt: null,
+        })),
+        { ignoreDuplicates: true, transaction }
+      );
       const memberCount = await models.CrmSegmentMember.count({
         where: { segmentId: segment.id, status: "active" },
         transaction,
@@ -1192,17 +1202,25 @@ async function applyBulkActionBatch(models, locationId, action, payload = {}, id
   if (action === "add_to_segment") {
     const segment = await models.CrmSegment.findOne({ where: { id: payload.targetSegmentId, locationId } });
     if (!segment) throw notFound("Segment");
-    await models.CrmSegmentMember.bulkCreate(
-      ids.map((contactId) => ({
-        segmentId: segment.id,
-        contactId,
-        locationId,
-        source: "manual",
-        status: "active",
-        enteredAt: new Date(),
-      })),
-      { ignoreDuplicates: true }
-    );
+    await models.sequelize.transaction(async (transaction) => {
+      const enteredAt = new Date();
+      await models.CrmSegmentMember.update(
+        { source: "manual", status: "active", enteredAt, exitedAt: null },
+        { where: { segmentId: segment.id, contactId: { [Op.in]: ids } }, transaction }
+      );
+      await models.CrmSegmentMember.bulkCreate(
+        ids.map((contactId) => ({
+          segmentId: segment.id,
+          contactId,
+          locationId,
+          source: "manual",
+          status: "active",
+          enteredAt,
+          exitedAt: null,
+        })),
+        { ignoreDuplicates: true, transaction }
+      );
+    });
     return { affected: ids.length, tagsAdded: [], segmentId: segment.id, memberContactIds: ids };
   }
 

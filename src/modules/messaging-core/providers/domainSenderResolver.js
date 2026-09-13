@@ -6,11 +6,34 @@ const ROUTE_PRIORITY = {
   transactional: ["client_portal_notification", "client_portal_otp", "default_dedicated"],
 };
 
-async function resolveSender({ locationId, useCase }) {
+async function resolveSender({ locationId, useCase, requestedFrom }) {
   if (!locationId) return null;
   const { CrmEmailDomain, CrmEmailDomainRoute } = getModels();
   const normalizedUseCase = useCase === "transactional" ? "transactional" : "marketing";
   const routeKeys = ROUTE_PRIORITY[normalizedUseCase] || ROUTE_PRIORITY.marketing;
+
+  if (requestedFrom) {
+    const requestedEmail = extractEmail(requestedFrom);
+    const verifiedDomains = await CrmEmailDomain.findAll({
+      where: {
+        locationId: Number(locationId),
+        status: "verified",
+        isActive: true,
+        useCase: { [Op.in]: [normalizedUseCase, "both"] },
+      },
+    });
+    const requestedDomain = verifiedDomains.find((domain) => (
+      selectableSenderEmail(domain).toLowerCase() === requestedEmail.toLowerCase()
+    ));
+    if (!requestedDomain) {
+      const err = new Error("Choose a verified sender email that is enabled for this email type.");
+      err.statusCode = 400;
+      err.code = "UNVERIFIED_SENDER_EMAIL";
+      err.errors = [{ field: "from", message: err.message }];
+      throw err;
+    }
+    return serializeSender(requestedDomain, requestedEmail);
+  }
 
   const routes = await CrmEmailDomainRoute.findAll({
     where: {
@@ -48,8 +71,8 @@ async function resolveSender({ locationId, useCase }) {
   return fallback ? serializeSender(fallback) : null;
 }
 
-function serializeSender(domain) {
-  const email = domain.senderEmail || `no-reply@${domain.domain}`;
+function serializeSender(domain, emailOverride) {
+  const email = emailOverride || senderEmail(domain);
   return {
     domainId: domain.id,
     domain: domain.domain,
@@ -57,6 +80,21 @@ function serializeSender(domain) {
     providerConfigId: domain.providerConfigId,
     from: domain.senderName ? `${quoteDisplayName(domain.senderName)} <${email}>` : email,
   };
+}
+
+function senderEmail(domain) {
+  return domain.senderEmail || `no-reply@${domain.domain}`;
+}
+
+function selectableSenderEmail(domain) {
+  const localPart = String(domain.domain || "").split(".")[0] || "events";
+  return domain.senderEmail || `${localPart}@${domain.domain}`;
+}
+
+function extractEmail(value) {
+  const text = String(value || "").trim();
+  const bracketed = text.match(/<([^<>]+)>\s*$/);
+  return (bracketed?.[1] || text).trim();
 }
 
 function quoteDisplayName(value) {
