@@ -3,6 +3,7 @@ const { getModels } = require("../../../db/models");
 const emailProvider = require("../../messaging-core/providers/emailProviderRouter");
 const { renderDesign, interpolate } = require("./builder/renderer");
 const { createDefaultDesign } = require("./builder/defaultDesign");
+const { renderRawTemplate } = require("./rawTemplateRenderer");
 
 function trackingUrls(messageId) {
   const base = config.urls.trackingBaseUrl;
@@ -82,9 +83,8 @@ function renderMessageTemplate(message, template, { tracking = null } = {}) {
     return { subject, html: rendered.html, text: "" };
   }
 
-  const html = interpolate(template.htmlBody || "", data);
-  const text = interpolate(template.plainText || "", data);
-  return { subject, html, text };
+  const rendered = renderRawTemplate({ editorType: template.editorType, htmlBody: template.htmlBody, plainText: template.plainText, data, tracking });
+  return { subject, html: rendered.htmlBody, text: rendered.plainText };
 }
 
 module.exports = {

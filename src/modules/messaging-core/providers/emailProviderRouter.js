@@ -38,7 +38,7 @@ async function sendMarketingEmail(input = {}) {
 async function sendEmail(input = {}) {
   const useCase = providerUseCase(input.useCase);
   const [sender, deliverySettings] = await Promise.all([
-    domainSenderResolver.resolveSender({
+    useCase === "marketing" ? domainSenderResolver.requireMarketingSender({ locationId: input.locationId, from: input.from }) : domainSenderResolver.resolveSender({
       locationId: input.locationId,
       useCase,
       requestedFrom: input.from,

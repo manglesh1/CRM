@@ -9,9 +9,12 @@ const QUEUES = [
 
 async function getWorkerVerification() {
   const latestWorker = await latestHeartbeat();
+  const audienceWorker = await latestHeartbeat("marketing-audience-worker");
   const queues = QUEUES.map((queue) => queueSummary(queue));
   const credentials = credentialSummary();
-  const workerHealth = latestWorker ? heartbeatHealth(latestWorker.lastHeartbeatAt) : "missing";
+  const workerHealth = latestWorker
+    ? (["stopped", "error"].includes(latestWorker.status) ? latestWorker.status : heartbeatHealth(latestWorker.lastHeartbeatAt))
+    : "missing";
 
   return {
     generatedAt: new Date().toISOString(),
@@ -20,6 +23,7 @@ async function getWorkerVerification() {
     credentials,
     queues,
     worker: latestWorker ? serializeHeartbeat(latestWorker) : null,
+    audienceWorker: audienceWorker ? serializeHeartbeat(audienceWorker) : null,
     commands: {
       startWorker: "npm run worker:marketing",
       runServer: "npm run dev",
@@ -34,6 +38,28 @@ async function getWorkerVerification() {
       check("worker_polled", Boolean(latestWorker?.lastPollAt), latestWorker?.lastPollAt ? "Worker has polled SQS." : "Worker has not polled SQS yet."),
     ],
   };
+}
+
+async function assertMarketingWorkerOnline({ audience = false } = {}) {
+  const { CrmMarketingWorkerHeartbeat } = getModels();
+  const { Op } = require("sequelize");
+  const requiredWorkers = audience ? ["marketing-worker", "marketing-audience-worker"] : ["marketing-worker"];
+  for (const workerType of requiredWorkers) {
+    const worker = await CrmMarketingWorkerHeartbeat.findOne({
+      where: {
+        workerType,
+        status: { [Op.in]: ["running", "polling", "rate_limited", "paused"] },
+        lastHeartbeatAt: { [Op.gte]: new Date(Date.now() - 120000) },
+      },
+    });
+    if (!worker) {
+      const command = workerType === "marketing-worker" ? "worker:marketing" : "worker:marketing-audience";
+      const error = new Error(`Marketing ${workerType === "marketing-worker" ? "delivery" : "audience/drip"} worker is not online. Start npm run ${command} before queueing emails.`);
+      error.statusCode = 503;
+      error.code = "MARKETING_WORKER_UNAVAILABLE";
+      throw error;
+    }
+  }
 }
 
 async function probeSqsQueues({ queueType = "all" } = {}) {
@@ -93,10 +119,10 @@ function queueSummary(queue) {
   };
 }
 
-async function latestHeartbeat() {
+async function latestHeartbeat(workerType = "marketing-worker") {
   const { CrmMarketingWorkerHeartbeat } = getModels();
   return CrmMarketingWorkerHeartbeat.findOne({
-    where: { workerType: "marketing-worker" },
+    where: { workerType },
     order: [["lastHeartbeatAt", "DESC"]],
   });
 }
@@ -136,7 +162,7 @@ function serializeHeartbeat(row) {
   return {
     workerId: row.workerId,
     status: row.status,
-    health: heartbeatHealth(row.lastHeartbeatAt),
+    health: ["stopped", "error"].includes(row.status) ? row.status : heartbeatHealth(row.lastHeartbeatAt),
     ageSeconds,
     queueType: row.queueType,
     lastStartedAt: row.lastStartedAt,
@@ -183,6 +209,7 @@ function normalizeAttributes(attributes = {}) {
 }
 
 module.exports = {
+  assertMarketingWorkerOnline,
   getWorkerVerification,
   probeSqsQueues,
 };

@@ -18,9 +18,17 @@ function sleep(ms) {
 
 async function runQueueWorker({ queueName, workerName, processJob }) {
   const workerId = `${process.env.HOSTNAME || "local"}:${process.pid}:${workerName}`;
+  const marketingHeartbeat = workerName === "marketing-audience-worker"
+    ? require("../marketing/email/workerHeartbeatService") : null;
+  let lastHeartbeat = 0;
   logger.info({ workerId, queueName }, `${workerName} started`);
 
+  try {
   while (!stopping) {
+    if (marketingHeartbeat && Date.now() - lastHeartbeat >= 30000) {
+      await marketingHeartbeat.recordHeartbeat({ workerType: workerName, workerId, status: "running" });
+      lastHeartbeat = Date.now();
+    }
     const jobs = await queueJobs.claimPendingJobs({
       workerId,
       queueName,
@@ -43,7 +51,11 @@ async function runQueueWorker({ queueName, workerName, processJob }) {
       }
     }
   }
-
+  } finally {
+    if (marketingHeartbeat) {
+      await marketingHeartbeat.recordHeartbeat({ workerType: workerName, workerId, status: "stopped", event: "stopped" });
+    }
+  }
   logger.info({ workerId, queueName }, `${workerName} stopped`);
 }
 

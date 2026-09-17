@@ -10,18 +10,21 @@ const { Op } = require("sequelize");
 const config = require("../../../config");
 const { getModels } = require("../../../db/models");
 const { createDefaultDesign } = require("./builder/defaultDesign");
-const { renderDesign } = require("./builder/renderer");
+const { renderDesign, interpolate } = require("./builder/renderer");
+const { renderRawTemplate } = require("./rawTemplateRenderer");
 const { getBuilderCatalog } = require("./builder/catalog");
 const { getMergeTagCatalog } = require("./builder/mergeTags");
 const { validateDesign } = require("./builder/schema");
 const emailProvider = require("../../messaging-core/providers/emailProviderRouter");
-const { enqueueMarketingMessage } = require("../../messaging-core/aws/sqsClient");
+const { enqueueMarketingMessage, assertMarketingQueueConfigured } = require("../../messaging-core/aws/sqsClient");
 const { uploadMarketingAsset } = require("./assetUpload");
 const marketingMessageRepository = require("./messageRepository");
 const suppressionService = require("./suppressionService");
 const contactService = require("../../contacts/service");
 const queueJobs = require("../../queueJobs/service");
 const dripService = require("./dripService");
+const { requireMarketingSender } = require("../../messaging-core/providers/domainSenderResolver");
+const { assertMarketingWorkerOnline } = require("./sqsWorkerVerificationService");
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -127,20 +130,6 @@ function stripHtml(value) {
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function escapeHtml(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function plainTextToHtml(value) {
-  const escaped = escapeHtml(value);
-  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.55;color:#111827;white-space:pre-wrap;">${escaped}</div>`;
 }
 
 function unique(values) {
@@ -918,24 +907,15 @@ async function renderTemplate(id, { data } = {}) {
   }
   return {
     editorType: template.editorType,
-    htmlBody: template.htmlBody || "",
-    plainText: template.plainText || "",
+    ...renderRawTemplate({ ...template, data: data || {} }),
   };
 }
 
 function renderDraftTemplate({ name = "Draft email", designJson, htmlBody, plainText, editorType = "design", data } = {}) {
-  if (editorType === "code") {
+  if (editorType === "code" || editorType === "plain") {
     return {
       editorType,
-      htmlBody: htmlBody || "",
-      plainText: plainText || stripHtml(htmlBody || ""),
-    };
-  }
-  if (editorType === "plain") {
-    return {
-      editorType,
-      htmlBody: plainTextToHtml(plainText || ""),
-      plainText: plainText || "",
+      ...renderRawTemplate({ editorType, htmlBody, plainText, data: data || {} }),
     };
   }
   if (designJson) validateDesign(designJson);
@@ -963,15 +943,16 @@ async function sendTestTemplate(id, { to, subject, data, from } = {}) {
   validate(templateValidation.errors.map((issue) => ({ field: issue.key, message: issue.message })));
   const htmlBody = template.editorType === "design"
     ? renderDesign(template.designJson || createDefaultDesign(), { title: template.name, data: data || {} }).html
-    : template.htmlBody || "";
+    : renderRawTemplate({ ...template, data: data || {} }).htmlBody;
   const send = template.useCase === "transactional"
     ? emailProvider.sendTransactionalEmail
     : emailProvider.sendMarketingEmail;
   const result = await send({
     locationId: template.locationId,
     to: String(to).trim(),
-    subject: subject || `[Test] ${template.name}`,
+    subject: interpolate(subject || `[Test] ${template.name}`, data || {}),
     html: htmlBody,
+    text: template.editorType === "design" ? undefined : renderRawTemplate({ ...template, data: data || {} }).plainText,
     from,
     trackingTags: [
       { name: "purpose", value: "test_send" },
@@ -998,18 +979,17 @@ async function sendTestDraftTemplate({ to, subject, name = "Draft email", useCas
     nextEditorType === "plain" && !String(plainText || "").trim() && { field: "plainText", message: "Plain text body is required." },
   ]);
   if (designJson) validateDesign(designJson);
+  const rawContent = renderRawTemplate({ editorType: nextEditorType, htmlBody, plainText, data: data || {} });
   const renderedHtml = nextEditorType === "design"
     ? renderDesign(designJson || createDefaultDesign(), { title: name, data: data || {} }).html
-    : nextEditorType === "plain"
-      ? plainTextToHtml(plainText || "")
-      : htmlBody || "";
+    : rawContent.htmlBody;
   const templateValidation = validateTemplateBeforeSend({
     name,
     editorType: nextEditorType,
     useCase,
     designJson: nextEditorType === "design" ? designJson : null,
-    htmlBody: nextEditorType === "code" ? renderedHtml : null,
-    plainText: nextEditorType === "plain" ? plainText : null,
+    htmlBody: nextEditorType === "code" ? htmlBody : null,
+    plainText: nextEditorType === "design" ? null : plainText,
   }, {
     subject,
     recipients: [{ email: String(to).trim(), data: data || {} }],
@@ -1022,8 +1002,9 @@ async function sendTestDraftTemplate({ to, subject, name = "Draft email", useCas
   const result = await send({
     locationId: locationId || null,
     to: String(to).trim(),
-    subject,
+    subject: interpolate(subject, data || {}),
     html: renderedHtml,
+    text: nextEditorType === "design" ? undefined : rawContent.plainText,
     from,
     trackingTags: [{ name: "purpose", value: "draft_test_send" }],
   });
@@ -1305,6 +1286,25 @@ async function preflightCampaignMessages(campaignId, body = {}) {
   const dripSteps = await prepareDripCampaign(campaign, body, { persist: false });
   const templateId = dripSteps?.[0]?.templateId || body.templateId || campaign.templateId;
   const checks = [];
+  const businessData = mergeBusinessDefaults(body.data && typeof body.data === "object" ? body.data : {});
+  try {
+    await requireMarketingSender({ locationId: campaign.locationId, from: body.from });
+    checks.push({ key: "sender", ok: true, message: "Active verified marketing sender is available." });
+  } catch (error) {
+    checks.push({ key: "sender", ok: false, message: error.message });
+  }
+  checks.push({
+    key: "businessAddress",
+    ok: Boolean(String(businessData.business?.address || "").trim()),
+    message: "A business postal address is required in campaign data.business.address or CRM_BUSINESS_ADDRESS.",
+  });
+  try {
+    assertMarketingQueueConfigured(campaignQueueType(campaign));
+    await assertMarketingWorkerOnline({ audience: hasAudienceSelection(body) || campaign.campaignType === "workflow_campaign" });
+    checks.push({ key: "queue", ok: true, message: "Marketing queue is configured." });
+  } catch (error) {
+    checks.push({ key: "queue", ok: false, message: error.message });
+  }
   let template = null;
   let templateValidation = null;
 
@@ -1519,6 +1519,7 @@ async function prepareDripCampaign(campaign, body = {}, { persist = true } = {})
 }
 
 async function validateCampaignQueueContext(campaign, body = {}, recipients = []) {
+  await requireMarketingSender({ locationId: campaign.locationId, from: body.from });
   const { CrmMarketingTemplate } = getModels();
   const templateId = body.templateId || campaign.templateId;
   validate([
@@ -1536,6 +1537,10 @@ async function validateCampaignQueueContext(campaign, body = {}, recipients = []
     data: globalData,
   });
   validate([
+    !String(globalData.business?.address || "").trim() && {
+      field: "business.address",
+      message: "Set your business postal address in campaign data.business.address or CRM_BUSINESS_ADDRESS before sending marketing emails.",
+    },
     template.useCase === "transactional" && {
       field: "templateId",
       message: "Transactional templates cannot be used for marketing campaign sends.",
@@ -1558,6 +1563,8 @@ async function validateCampaignQueueContext(campaign, body = {}, recipients = []
 }
 
 async function createCampaignAudienceJob(campaign, body = {}) {
+  assertMarketingQueueConfigured(campaignQueueType(campaign));
+  await assertMarketingWorkerOnline({ audience: true });
   const { CrmMarketingCampaignAudienceJob } = getModels();
   const audience = normalizeCampaignAudience(body);
   validate([
@@ -1617,6 +1624,8 @@ async function queueCampaignMessages(campaignId, body = {}) {
   const { CrmMarketingCampaign, CrmMarketingTemplate } = getModels();
   const campaign = await CrmMarketingCampaign.findByPk(campaignId);
   if (!campaign) throw notFound("Campaign");
+  assertMarketingQueueConfigured(campaignQueueType(campaign));
+  await assertMarketingWorkerOnline({ audience: hasAudienceSelection(body) || campaign.campaignType === "workflow_campaign" });
   validate([
     campaign.status === "paused" && { field: "status", message: "Resume the campaign before queueing more recipients." },
     campaign.status === "cancelled" && { field: "status", message: "Cancelled campaigns cannot be queued." },

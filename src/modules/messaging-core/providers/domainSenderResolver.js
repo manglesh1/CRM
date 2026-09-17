@@ -65,6 +65,7 @@ async function resolveSender({ locationId, useCase, requestedFrom }) {
       status: "verified",
       isActive: true,
       useCase: { [Op.in]: [normalizedUseCase, "both"] },
+      ...(normalizedUseCase === "marketing" ? { isDefault: true, senderEmail: { [Op.ne]: null } } : {}),
     },
     order: [["isDefault", "DESC"], ["verifiedAt", "DESC"], ["createdAt", "DESC"]],
   });
@@ -102,4 +103,16 @@ function quoteDisplayName(value) {
   return `"${name}"`;
 }
 
-module.exports = { resolveSender };
+async function requireMarketingSender({ locationId, from } = {}) {
+  const sender = await resolveSender({ locationId, useCase: "marketing", requestedFrom: from });
+  if (!sender) {
+    const error = new Error("No active verified marketing sender is configured for this location. Verify a sender in CRM Email Settings before sending.");
+    error.statusCode = 409;
+    error.code = "VERIFIED_MARKETING_SENDER_REQUIRED";
+    error.errors = [{ field: "from", message: error.message }];
+    throw error;
+  }
+  return sender;
+}
+
+module.exports = { resolveSender, requireMarketingSender };

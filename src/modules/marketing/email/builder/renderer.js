@@ -840,8 +840,11 @@ function applyTracking(html, tracking) {
   if (!tracking) return html;
   let out = html;
   if (tracking.clickBaseUrl) {
-    out = out.replace(/<a\s+([^>]*?)href="(https?:\/\/[^"]+)"([^>]*)>/gi, (_match, before, href, after) => {
-      const tracked = `${tracking.clickBaseUrl}?u=${encodeURIComponent(href)}`;
+    out = out.replace(/<a\s+([^>]*?)href\s*=\s*(["'])(https?:\/\/[^"']+)\2([^>]*)>/gi, (match, before, _quote, href, after) => {
+      const destination = href.replace(/&amp;/gi, "&");
+      // Compliance links must remain direct; do not double-wrap tracked URLs.
+      if (/\/m\/(unsubscribe|view)\//i.test(destination) || destination.startsWith(tracking.clickBaseUrl)) return match;
+      const tracked = `${tracking.clickBaseUrl}?u=${encodeURIComponent(destination)}`;
       return `<a ${before}href="${escapeAttr(tracked)}"${after}>`;
     });
   }
