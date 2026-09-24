@@ -40,8 +40,8 @@ async function getWorkerVerification() {
   };
 }
 
-async function assertMarketingWorkerOnline({ audience = false } = {}) {
-  const { CrmMarketingWorkerHeartbeat } = getModels();
+async function assertMarketingWorkerOnline({ audience = false, models = getModels() } = {}) {
+  const { CrmMarketingWorkerHeartbeat } = models;
   const { Op } = require("sequelize");
   const requiredWorkers = audience ? ["marketing-worker", "marketing-audience-worker"] : ["marketing-worker"];
   for (const workerType of requiredWorkers) {

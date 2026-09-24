@@ -6,9 +6,9 @@ const ROUTE_PRIORITY = {
   transactional: ["client_portal_notification", "client_portal_otp", "default_dedicated"],
 };
 
-async function resolveSender({ locationId, useCase, requestedFrom }) {
+async function resolveSender({ locationId, useCase, requestedFrom, models = getModels() } = {}) {
   if (!locationId) return null;
-  const { CrmEmailDomain, CrmEmailDomainRoute } = getModels();
+  const { CrmEmailDomain, CrmEmailDomainRoute } = models;
   const normalizedUseCase = useCase === "transactional" ? "transactional" : "marketing";
   const routeKeys = ROUTE_PRIORITY[normalizedUseCase] || ROUTE_PRIORITY.marketing;
 
@@ -103,8 +103,8 @@ function quoteDisplayName(value) {
   return `"${name}"`;
 }
 
-async function requireMarketingSender({ locationId, from } = {}) {
-  const sender = await resolveSender({ locationId, useCase: "marketing", requestedFrom: from });
+async function requireMarketingSender({ locationId, from, models } = {}) {
+  const sender = await resolveSender({ locationId, useCase: "marketing", requestedFrom: from, models });
   if (!sender) {
     const error = new Error("No active verified marketing sender is configured for this location. Verify a sender in CRM Email Settings before sending.");
     error.statusCode = 409;

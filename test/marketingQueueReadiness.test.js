@@ -23,15 +23,12 @@ test("repository never marks a skipped enqueue as queued", async () => {
 });
 
 test("offline marketing workers block queueing and drip requires an audience worker", async () => {
-  const { getModels } = require("../src/db/models");
   const { assertMarketingWorkerOnline } = require("../src/modules/marketing/email/sqsWorkerVerificationService");
-  const model = getModels().CrmMarketingWorkerHeartbeat;
-  const original = model.findOne;
-  try {
-    model.findOne = async () => null;
-    await assert.rejects(assertMarketingWorkerOnline(), { code: "MARKETING_WORKER_UNAVAILABLE" });
-    model.findOne = async ({ where }) => where.workerType === "marketing-worker" ? { status: "polling" } : null;
-    await assert.doesNotReject(assertMarketingWorkerOnline());
-    await assert.rejects(assertMarketingWorkerOnline({ audience: true }), /audience\/drip worker is not online/);
-  } finally { model.findOne = original; }
+  const heartbeat = { findOne: async () => null };
+  const models = { CrmMarketingWorkerHeartbeat: heartbeat };
+
+  await assert.rejects(assertMarketingWorkerOnline({ models }), { code: "MARKETING_WORKER_UNAVAILABLE" });
+  heartbeat.findOne = async ({ where }) => where.workerType === "marketing-worker" ? { status: "polling" } : null;
+  await assert.doesNotReject(assertMarketingWorkerOnline({ models }));
+  await assert.rejects(assertMarketingWorkerOnline({ audience: true, models }), /audience\/drip worker is not online/);
 });
