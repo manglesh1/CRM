@@ -13,6 +13,19 @@ const EVENTS = {
       paymentLink: "",
     },
   },
+  "booking.reminder": {
+    description: "Upcoming session-pass booking; remind the customer before the visit",
+    sourceSystem: "aeroSportsAdmin",
+    sourceResourceType: "booking",
+    requiredPayloadFields: ["guestName", "bookingNumber", "venueName", "bookingDate"],
+    samplePayload: {
+      guestName: "Yogesh",
+      bookingNumber: "BK-2026-001",
+      venueName: "Mumbai Sports Park",
+      bookingDate: "Monday, September 28, 2026",
+      sessionTime: "60 Minute Session Pass · 10:00 – 11:00",
+    },
+  },
   "payment.received": {
     description: "Payment captured for a booking; send receipt",
     sourceSystem: "aeroSportsAdmin",
