@@ -27,6 +27,17 @@ function defineCrmProviderConfig(sequelize) {
       timestamps: true,
     }
   );
+
+  const { CrmCacheService } = require('../../shared/redisClient');
+  const clearCache = async () => {
+    await CrmCacheService.clearCachePattern('movira:crm:providerConfig:*');
+  };
+  
+  CrmProviderConfig.afterCreate(clearCache);
+  CrmProviderConfig.afterUpdate(clearCache);
+  CrmProviderConfig.afterDestroy(clearCache);
+
+  return CrmProviderConfig;
 }
 
 module.exports = defineCrmProviderConfig;

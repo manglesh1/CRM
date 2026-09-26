@@ -36,6 +36,17 @@ function defineCrmEmailDomain(sequelize) {
       timestamps: true,
     }
   );
+
+  const { CrmCacheService } = require('../../shared/redisClient');
+  const clearCache = async () => {
+    await CrmCacheService.clearCachePattern('movira:crm:emailDomain:*');
+  };
+  
+  CrmEmailDomain.afterCreate(clearCache);
+  CrmEmailDomain.afterUpdate(clearCache);
+  CrmEmailDomain.afterDestroy(clearCache);
+
+  return CrmEmailDomain;
 }
 
 module.exports = defineCrmEmailDomain;
