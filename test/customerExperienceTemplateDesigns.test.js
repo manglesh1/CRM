@@ -50,3 +50,26 @@ test("Customer Experience request plain text includes a usable survey URL", () =
   });
   assert.match(text, /Start survey: \{\{feedbackUrl\}\}/);
 });
+
+test("all Customer Experience layouts omit unrelated booking and payment fields", () => {
+  for (const key of ["customerExperienceFeedbackRequest", "customerExperienceFeedbackReceived", "customerExperienceRecoveryReply", "customerExperienceRewardIssued"]) {
+    const design = serializedDesign(key);
+    const plainText = buildTransactionalPlainText({ key, family: "customer_experience" });
+    assert.doesNotMatch(design + plainText, /bookingNumber|bookingDate|totalAmount|qrCodeUrl/);
+  }
+});
+
+test("survey rating links cover all five ratings without submitting feedback", () => {
+  const design = serializedDesign("customerExperienceFeedbackRequest");
+  for (let rating = 1; rating <= 5; rating += 1) {
+    assert.ok(design.includes(`{{feedbackUrl}}?rating=${rating}`));
+  }
+  assert.match(design, /review it before submitting/);
+});
+
+test("plain-text staff feedback includes the response and management link", () => {
+  const text = buildTransactionalPlainText({ key: "customerExperienceFeedbackReceived", family: "customer_experience" });
+  for (const token of ["guestName", "guestEmail", "ratingOverall", "feedbackComment", "feedbackAdminUrl"]) {
+    assert.ok(text.includes(`{{${token}}}`));
+  }
+});

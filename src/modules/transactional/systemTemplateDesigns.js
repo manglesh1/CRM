@@ -30,6 +30,7 @@ const FONT_STACK =
   "Aptos, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif";
 
 const FAMILY_PROFILES = {
+  customer_experience: { accent: BRAND.primary, dark: BRAND.navy, soft: BRAND.soft, label: "Customer Experience" },
   booking: { accent: BRAND.primary, dark: BRAND.navy, soft: BRAND.soft, label: "Booking" },
   payment: { accent: BRAND.primary, dark: BRAND.navy, soft: BRAND.soft, label: "Payment" },
   waiver: { accent: BRAND.primary, dark: BRAND.navy, soft: BRAND.soft, label: "Waiver" },
@@ -42,6 +43,10 @@ const FAMILY_PROFILES = {
 };
 
 const TEMPLATE_PRESENTATION = Object.freeze({
+  customerExperienceFeedbackRequest: { status: "Your feedback", title: "Tell us about your visit", tone: "primary" },
+  customerExperienceFeedbackReceived: { status: "New response", title: "Guest feedback", tone: "primary" },
+  customerExperienceRecoveryReply: { status: "Follow-up", title: "A message from your venue", tone: "primary" },
+  customerExperienceRewardIssued: { status: "Thank you", title: "Your reward", tone: "success" },
   bookingConfirmation: { status: "Confirmed", title: "Booking details", tone: "success" },
   "canceled-tentative-booking": { status: "Cancelled", title: "Cancelled booking", tone: "danger" },
   "fnb-order-confirmation": { status: "Confirmed", title: "Food & beverage order", tone: "success" },
@@ -505,8 +510,33 @@ function buildSaasMain(profile, row) {
   );
 }
 
+function buildCustomerExperienceMain(profile, row) {
+  const presentation = presentationFor(row);
+  let content;
+  if (row.key === "customerExperienceFeedbackRequest") {
+    content = `<div class="txn-label">Survey</div><div class="txn-value">{{surveyFormName}}</div>
+      <p class="txn-muted">Choose a rating to start your survey. You can review it before submitting.</p>
+      <div>${[1, 2, 3, 4, 5].map((rating) =>
+        `<a class="txn-link" href="{{feedbackUrl}}?rating=${rating}" style="display:inline-block;padding:10px 14px;margin:3px;" aria-label="Rate your visit ${rating} out of 5">${rating}</a>`
+      ).join(" ")}</div><p class="txn-muted">1 = Poor &nbsp; 5 = Excellent</p>`;
+  } else if (row.key === "customerExperienceFeedbackReceived") {
+    content = `<div class="txn-label">Guest</div><div class="txn-value">{{guestName}}</div>
+      <div class="txn-muted">{{guestEmail}}</div>
+      <p class="txn-value">Overall rating: {{ratingOverall}}/5</p>
+      <div class="txn-label">Comment</div><p class="txn-value">{{feedbackComment}}</p>
+      <div class="txn-label">Ratings by category</div>{{factorRatingsHtml}}`;
+  } else {
+    // Reply and reward details already live in their editable introduction.
+    content = '<div class="txn-label">From</div><div class="txn-value">{{venueName}}</div>';
+  }
+  return buildSummaryCard(profile, presentation.title,
+    `<tr><td style="padding:16px;">${content}</td></tr>`, presentation);
+}
+
 function actionFor(row) {
   const key = row.key;
+  if (key === "customerExperienceFeedbackRequest") return { label: "Start survey", href: "{{feedbackUrl}}" };
+  if (key === "customerExperienceFeedbackReceived") return { label: "View feedback", href: "{{feedbackAdminUrl}}" };
   if (key === "saasInvoicePaymentLink") return { label: "Pay invoice", href: "{{paymentLink}}" };
   if (key === "saasOnboardingStarted") return { label: "Open Movira", href: "{{loginUrl}}" };
   if (key === "saasParkGoLive") return { label: "Open Movira", href: "{{loginUrl}}" };
@@ -528,6 +558,7 @@ function actionFor(row) {
 }
 
 function mainContentFor(row, profile, headingText) {
+  if (row.family === "customer_experience") return buildCustomerExperienceMain(profile, row);
   if (row.family === "saas") return buildSaasMain(profile, row);
   if (row.family === "booking") return buildBookingMain(profile, row);
   if (row.family === "payment") return buildPaymentMain(profile, row.key);
@@ -540,6 +571,7 @@ function mainContentFor(row, profile, headingText) {
 }
 
 function headerReferenceFor(row = {}) {
+  if (row.family === "customer_experience") return "{{venueName}}";
   if (row.family === "saas") {
     if (row.key === "saasOnboardingStarted") return "ONBOARDING";
     if (["saasParkGoLive", "saasParkGoLiveBlocked"].includes(row.key)) return "PARK STATUS";
@@ -556,6 +588,9 @@ function headerStatusFor(row = {}) {
 }
 
 function factsFor(row = {}) {
+  if (row.family === "customer_experience") {
+    return [["VENUE", "{{venueName}}"], ["GUEST", "{{guestName}}"], ["STATUS", presentationFor(row).status]];
+  }
   if (row.family === "saas") {
     if (["saasOnboardingStarted", "saasParkGoLive", "saasParkGoLiveBlocked"].includes(row.key)) {
       return [
@@ -802,6 +837,18 @@ function collectTransactionalVariables(row, design) {
 
 function buildTransactionalPlainText(row = {}) {
   const defaults = parseJson(row.defaults);
+  if (row.family === "customer_experience") {
+    const details = row.key === "customerExperienceFeedbackRequest"
+      ? ["Survey: {{surveyFormName}}", "Start survey: {{feedbackUrl}}"]
+      : row.key === "customerExperienceFeedbackReceived"
+        ? ["Guest: {{guestName}}", "Email: {{guestEmail}}", "Overall rating: {{ratingOverall}}/5", "Comment: {{feedbackComment}}", "View feedback: {{feedbackAdminUrl}}"]
+        : [];
+    return [
+      defaults.heading || row.name || presentationFor(row).title, "",
+      String(defaults.paragraph || "").replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, ""),
+      "", "Venue: {{venueName}}", ...details, "", "Powered by Movira360",
+    ].join("\n");
+  }
   if (row.family === "saas") {
     return [
       defaults.heading || row.name || "Movira SaaS update",
