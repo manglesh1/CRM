@@ -76,6 +76,15 @@ async function pollQueue(queueUrl) {
   for (const message of messages) {
     try {
       const result = await processor.processTransactionalSqsMessage(message);
+
+      if (result?.skipped && result.reason === "message_not_found") {
+        logger.warn(
+          { messageId: result.messageId, queueType },
+          "transactional message row not found; leaving SQS message for retry"
+        );
+        continue;
+      }
+
       await sqs.deleteMessage(queueUrl, message.ReceiptHandle);
       logger.info({ result }, "transactional message processed");
       await heartbeat.safeHeartbeat({
