@@ -69,9 +69,11 @@ async function ingestEvent(body) {
   };
 
   const result = await transactionalService.enqueueMessage(transactionalRequest);
-  if (result.duplicate) {
+  // Security messages belong only in the transactional delivery pipeline.
+  // Never copy recovery codes into customer profiles or marketing jobs.
+  if (result.duplicate || eventMeta.skipContactAutomation === true) {
     return {
-      duplicate: true,
+      duplicate: Boolean(result.duplicate),
       messageId: result.message.id,
       status: result.message.status,
       eventType: event.eventType,
@@ -79,7 +81,7 @@ async function ingestEvent(body) {
       bindingId: binding.id,
       contactId: null,
       contactCreated: false,
-      automation: [{ skipped: "duplicate_event" }],
+      automation: [{ skipped: result.duplicate ? "duplicate_event" : "security_event" }],
     };
   }
 

@@ -1,4 +1,18 @@
 const EVENTS = {
+  "employee.password_reset.otp_requested": {
+    description: "Employee portal password recovery; send a verification code",
+    sourceSystem: "aeroSportsAdmin",
+    sourceResourceType: "employee_user",
+    skipContactAutomation: true,
+    requiredPayloadFields: ["otpCode", "expiryMinutes", "venueName"],
+    samplePayload: {
+      employeeName: "Alex Rivera",
+      employeeFirstName: "Alex",
+      otpCode: "123456",
+      expiryMinutes: 10,
+      venueName: "Movira Main Branch",
+    },
+  },
   "booking.confirmed": {
     description: "Customer booking confirmed; send confirmation with details",
     sourceSystem: "aeroSportsAdmin",
