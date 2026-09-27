@@ -29,6 +29,21 @@ function resolveMarketingQueue(queueType) {
   return config.aws.queues.marketingBulk;
 }
 
+function assertMarketingQueueConfigured(queueType = "bulk") {
+  if (!["bulk", "journey"].includes(queueType)) {
+    const error = new Error("Choose a valid marketing queue: bulk or journey.");
+    error.statusCode = 400;
+    error.code = "INVALID_MARKETING_QUEUE";
+    throw error;
+  }
+  if (!resolveMarketingQueue(queueType)) {
+    const error = new Error(`Marketing ${queueType} queue is unavailable. Configure its SQS URL and explicitly enable real SQS in development before sending.`);
+    error.statusCode = 503;
+    error.code = "MARKETING_QUEUE_UNAVAILABLE";
+    throw error;
+  }
+}
+
 async function enqueueTransactionalMessage({ messageId, channel, priority }) {
   const queueUrl = resolveTransactionalQueue(priority);
   const body = {
@@ -59,6 +74,7 @@ async function enqueueTransactionalMessage({ messageId, channel, priority }) {
 }
 
 async function enqueueMarketingMessage({ messageId, channel = "email", queueType = "bulk", campaignId = null }) {
+  assertMarketingQueueConfigured(queueType);
   const queueUrl = resolveMarketingQueue(queueType);
   const body = {
     messageId,
@@ -67,11 +83,6 @@ async function enqueueMarketingMessage({ messageId, channel = "email", queueType
     channel,
     queueType,
   };
-
-  if (!queueUrl) {
-    logger.warn({ body }, "Marketing SQS URL missing; message stored but not enqueued");
-    return { skipped: true, reason: "missing_queue_url", body };
-  }
 
   const result = await getClient().send(
     new SendMessageCommand({
@@ -96,6 +107,7 @@ module.exports = {
   getQueueAttributes,
   resolveTransactionalQueue,
   resolveMarketingQueue,
+  assertMarketingQueueConfigured,
 };
 
 async function receiveMessages(queueUrl, { maxMessages = 5, waitTimeSeconds = 10 } = {}) {

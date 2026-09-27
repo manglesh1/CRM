@@ -11,11 +11,13 @@ function getClient() {
   return client;
 }
 
-function buildRawMime({ from, to, subject, html, text, attachments }) {
+function buildRawMime({ from, to, subject, html, text, attachments, replyTo, bcc }) {
   return new Promise((resolve, reject) => {
     const composer = new MailComposer({
       from,
       to,
+      replyTo: replyTo || undefined,
+      bcc: normalizeAddresses(bcc),
       subject: subject || "",
       html: html || "",
       text: text || stripHtml(html || ""),
@@ -33,7 +35,7 @@ function buildRawMime({ from, to, subject, html, text, attachments }) {
   });
 }
 
-async function sendTransactionalEmail({ to, subject, html, text, from, attachments = [], messageId }) {
+async function sendTransactionalEmail({ to, subject, html, text, from, attachments = [], messageId, replyTo, bcc = [] }) {
   const fromAddress = from || config.aws.ses.defaultFrom;
   const tags = [{ Name: "domain", Value: "transactional" }];
   if (messageId) tags.push({ Name: "message_id", Value: String(messageId).slice(0, 256) });
@@ -46,11 +48,14 @@ async function sendTransactionalEmail({ to, subject, html, text, from, attachmen
       html,
       text,
       attachments,
+      replyTo,
+      bcc,
     });
     const command = new SendEmailCommand({
       FromEmailAddress: fromAddress,
       ConfigurationSetName: config.aws.ses.transactionalConfigSet,
-      Destination: { ToAddresses: [to] },
+      Destination: destinationFor(to, bcc),
+      ...replyToFor(replyTo),
       EmailTags: tags,
       Content: { Raw: { Data: rawMessage } },
     });
@@ -61,9 +66,8 @@ async function sendTransactionalEmail({ to, subject, html, text, from, attachmen
   const command = new SendEmailCommand({
     FromEmailAddress: fromAddress,
     ConfigurationSetName: config.aws.ses.transactionalConfigSet,
-    Destination: {
-      ToAddresses: [to],
-    },
+    Destination: destinationFor(to, bcc),
+    ...replyToFor(replyTo),
     EmailTags: tags,
     Content: {
       Simple: {
@@ -92,13 +96,12 @@ async function sendTransactionalEmail({ to, subject, html, text, from, attachmen
   };
 }
 
-async function sendMarketingEmail({ to, subject, html, text, from, trackingTags = [] }) {
+async function sendMarketingEmail({ to, subject, html, text, from, trackingTags = [], replyTo, bcc = [] }) {
   const command = new SendEmailCommand({
     FromEmailAddress: from || config.aws.ses.defaultFrom,
     ConfigurationSetName: config.aws.ses.marketingConfigSet,
-    Destination: {
-      ToAddresses: [to],
-    },
+    Destination: destinationFor(to, bcc),
+    ...replyToFor(replyTo),
     EmailTags: trackingTags.map((tag) => ({
       Name: String(tag.name).slice(0, 256),
       Value: String(tag.value).slice(0, 256),
@@ -132,6 +135,24 @@ async function sendMarketingEmail({ to, subject, html, text, from, trackingTags 
 
 function stripHtml(html) {
   return String(html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function normalizeAddresses(value) {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  return Array.from(new Set(values.map((item) => String(item || "").trim().toLowerCase()).filter(Boolean)));
+}
+
+function destinationFor(to, bcc) {
+  const bccAddresses = normalizeAddresses(bcc);
+  return {
+    ToAddresses: [to],
+    ...(bccAddresses.length ? { BccAddresses: bccAddresses } : {}),
+  };
+}
+
+function replyToFor(replyTo) {
+  const addresses = normalizeAddresses(replyTo);
+  return addresses.length ? { ReplyToAddresses: addresses } : {};
 }
 
 module.exports = {

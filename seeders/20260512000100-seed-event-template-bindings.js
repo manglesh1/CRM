@@ -8,6 +8,12 @@ const bindings = [
     variableMap: {},
   },
   {
+    eventType: "booking.reminder",
+    templateKey: "booking-reminder",
+    priority: "normal",
+    variableMap: {},
+  },
+  {
     eventType: "payment.received",
     templateKey: "payment-receipt",
     priority: "high",

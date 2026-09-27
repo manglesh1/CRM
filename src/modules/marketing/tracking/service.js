@@ -3,6 +3,7 @@ const suppressionService = require("../email/suppressionService");
 const messageDispatcher = require("../email/messageDispatcher");
 const queueJobs = require("../../queueJobs/service");
 const warmupService = require("../../messaging-core/warmup/senderWarmupService");
+const dripService = require("../email/dripService");
 
 const EVENT_TO_STATUS = {
   queued: { status: "queued", field: "queuedAt" },
@@ -88,6 +89,11 @@ async function recordMarketingEvent(messageId, eventType, payload = {}) {
   }
 
   if (isFirstOccurrence && ["open", "click"].includes(eventType)) {
+    try {
+      await dripService.wakeEnrollmentForMessage(message);
+    } catch (_err) {
+      // Tracking remains available if the drip scheduler is temporarily unavailable.
+    }
     try {
       await queueJobs.enqueueAutomationEvents([{
         locationId: message.locationId,

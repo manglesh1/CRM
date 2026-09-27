@@ -26,13 +26,19 @@ async function findMessageByProviderMessageId(providerMessageId) {
 }
 
 async function markQueued(message, enqueueResult) {
+  if (!enqueueResult || enqueueResult.skipped || !enqueueResult.sqsMessageId) {
+    const error = new Error("Marketing message was not accepted by SQS. It has not been queued.");
+    error.statusCode = 503;
+    error.code = "MARKETING_ENQUEUE_FAILED";
+    throw error;
+  }
   const metadata = {
     ...(message.metadata || {}),
     enqueue: enqueueResult || null,
   };
   return message.update({
-    status: enqueueResult?.skipped ? "pending" : "queued",
-    queuedAt: enqueueResult?.skipped ? message.queuedAt : new Date(),
+    status: "queued",
+    queuedAt: new Date(),
     metadata,
   });
 }

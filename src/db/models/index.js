@@ -20,6 +20,7 @@ const defineCrmMarketingTemplateRevision = require("./CrmMarketingTemplateRevisi
 const defineCrmMarketingSuppression = require("./CrmMarketingSuppression");
 const defineCrmMarketingWorkerHeartbeat = require("./CrmMarketingWorkerHeartbeat");
 const defineCrmMarketingCampaignAudienceJob = require("./CrmMarketingCampaignAudienceJob");
+const defineCrmMarketingDripEnrollment = require("./CrmMarketingDripEnrollment");
 const defineCrmMarketingCalendarPlan = require("./CrmMarketingCalendarPlan");
 const defineCrmMarketingCalendarRule = require("./CrmMarketingCalendarRule");
 const defineCrmMarketingCalendarOverride = require("./CrmMarketingCalendarOverride");
@@ -67,6 +68,7 @@ function getModels() {
   const CrmMarketingSuppression = defineCrmMarketingSuppression(sequelize);
   const CrmMarketingWorkerHeartbeat = defineCrmMarketingWorkerHeartbeat(sequelize);
   const CrmMarketingCampaignAudienceJob = defineCrmMarketingCampaignAudienceJob(sequelize);
+  const CrmMarketingDripEnrollment = defineCrmMarketingDripEnrollment(sequelize);
   const CrmMarketingCalendarPlan = defineCrmMarketingCalendarPlan(sequelize);
   const CrmMarketingCalendarRule = defineCrmMarketingCalendarRule(sequelize);
   const CrmMarketingCalendarOverride = defineCrmMarketingCalendarOverride(sequelize);
@@ -107,6 +109,8 @@ function getModels() {
   CrmMarketingCampaign.hasMany(CrmMarketingCampaignAudienceJob, { foreignKey: "campaignId", as: "audienceJobs" });
   CrmMarketingCampaignAudienceJob.belongsTo(CrmMarketingCampaign, { foreignKey: "campaignId", as: "campaign" });
   CrmMarketingCampaignAudienceJob.belongsTo(CrmMarketingTemplate, { foreignKey: "templateId", as: "template" });
+  CrmMarketingCampaign.hasMany(CrmMarketingDripEnrollment, { foreignKey: "campaignId", as: "dripEnrollments" });
+  CrmMarketingDripEnrollment.belongsTo(CrmMarketingCampaign, { foreignKey: "campaignId", as: "campaign" });
   CrmMarketingCalendarPlan.hasMany(CrmMarketingCalendarRule, { foreignKey: "planId", as: "rules" });
   CrmMarketingCalendarRule.belongsTo(CrmMarketingCalendarPlan, { foreignKey: "planId", as: "plan" });
   CrmMarketingCalendarPlan.hasMany(CrmMarketingCalendarOverride, { foreignKey: "planId", as: "overrides" });
@@ -201,6 +205,7 @@ function getModels() {
     CrmMarketingSuppression,
     CrmMarketingWorkerHeartbeat,
     CrmMarketingCampaignAudienceJob,
+    CrmMarketingDripEnrollment,
     CrmMarketingCalendarPlan,
     CrmMarketingCalendarRule,
     CrmMarketingCalendarOverride,

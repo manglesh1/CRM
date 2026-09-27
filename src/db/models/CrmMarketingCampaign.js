@@ -32,6 +32,7 @@ function defineCrmMarketingCampaign(sequelize) {
       },
       scheduledAt: { type: DataTypes.DATE, allowNull: true },
       executionDate: { type: DataTypes.DATE, allowNull: true },
+      dripSteps: { type: DataTypes.JSONB, allowNull: false, defaultValue: [] },
       totalRecipients: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       totalDelivered: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
       totalOpened: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },

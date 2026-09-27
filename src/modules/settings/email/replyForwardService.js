@@ -51,6 +51,16 @@ async function getReplyForward({ locationId } = {}) {
   return serialize(row);
 }
 
+async function getOutboundDeliverySettings({ locationId } = {}) {
+  if (!locationId) return { replyTo: null, bcc: [] };
+  const settings = await getReplyForward({ locationId });
+  return {
+    // All supported providers consistently support one Reply-To address.
+    replyTo: settings.replyAddresses[0] || null,
+    bcc: settings.bccEmails,
+  };
+}
+
 async function updateReplyForward({ locationId, ...body } = {}) {
   if (!locationId) {
     const err = new Error("locationId is required");
@@ -96,4 +106,4 @@ async function updateReplyForward({ locationId, ...body } = {}) {
   return serialize(row);
 }
 
-module.exports = { getReplyForward, updateReplyForward };
+module.exports = { getReplyForward, getOutboundDeliverySettings, updateReplyForward };

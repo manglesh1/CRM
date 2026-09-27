@@ -6,11 +6,34 @@ const ROUTE_PRIORITY = {
   transactional: ["client_portal_notification", "client_portal_otp", "default_dedicated"],
 };
 
-async function resolveSender({ locationId, useCase }) {
+async function resolveSender({ locationId, useCase, requestedFrom, models = getModels() } = {}) {
   if (!locationId) return null;
-  const { CrmEmailDomain, CrmEmailDomainRoute } = getModels();
+  const { CrmEmailDomain, CrmEmailDomainRoute } = models;
   const normalizedUseCase = useCase === "transactional" ? "transactional" : "marketing";
   const routeKeys = ROUTE_PRIORITY[normalizedUseCase] || ROUTE_PRIORITY.marketing;
+
+  if (requestedFrom) {
+    const requestedEmail = extractEmail(requestedFrom);
+    const verifiedDomains = await CrmEmailDomain.findAll({
+      where: {
+        locationId: Number(locationId),
+        status: "verified",
+        isActive: true,
+        useCase: { [Op.in]: [normalizedUseCase, "both"] },
+      },
+    });
+    const requestedDomain = verifiedDomains.find((domain) => (
+      selectableSenderEmail(domain).toLowerCase() === requestedEmail.toLowerCase()
+    ));
+    if (!requestedDomain) {
+      const err = new Error("Choose a verified sender email that is enabled for this email type.");
+      err.statusCode = 400;
+      err.code = "UNVERIFIED_SENDER_EMAIL";
+      err.errors = [{ field: "from", message: err.message }];
+      throw err;
+    }
+    return serializeSender(requestedDomain, requestedEmail);
+  }
 
   const routes = await CrmEmailDomainRoute.findAll({
     where: {
@@ -42,14 +65,15 @@ async function resolveSender({ locationId, useCase }) {
       status: "verified",
       isActive: true,
       useCase: { [Op.in]: [normalizedUseCase, "both"] },
+      ...(normalizedUseCase === "marketing" ? { isDefault: true, senderEmail: { [Op.ne]: null } } : {}),
     },
     order: [["isDefault", "DESC"], ["verifiedAt", "DESC"], ["createdAt", "DESC"]],
   });
   return fallback ? serializeSender(fallback) : null;
 }
 
-function serializeSender(domain) {
-  const email = domain.senderEmail || `no-reply@${domain.domain}`;
+function serializeSender(domain, emailOverride) {
+  const email = emailOverride || senderEmail(domain);
   return {
     domainId: domain.id,
     domain: domain.domain,
@@ -59,9 +83,36 @@ function serializeSender(domain) {
   };
 }
 
+function senderEmail(domain) {
+  return domain.senderEmail || `no-reply@${domain.domain}`;
+}
+
+function selectableSenderEmail(domain) {
+  const localPart = String(domain.domain || "").split(".")[0] || "events";
+  return domain.senderEmail || `${localPart}@${domain.domain}`;
+}
+
+function extractEmail(value) {
+  const text = String(value || "").trim();
+  const bracketed = text.match(/<([^<>]+)>\s*$/);
+  return (bracketed?.[1] || text).trim();
+}
+
 function quoteDisplayName(value) {
   const name = String(value || "").replace(/"/g, '\\"').trim();
   return `"${name}"`;
 }
 
-module.exports = { resolveSender };
+async function requireMarketingSender({ locationId, from, models } = {}) {
+  const sender = await resolveSender({ locationId, useCase: "marketing", requestedFrom: from, models });
+  if (!sender) {
+    const error = new Error("No active verified marketing sender is configured for this location. Verify a sender in CRM Email Settings before sending.");
+    error.statusCode = 409;
+    error.code = "VERIFIED_MARKETING_SENDER_REQUIRED";
+    error.errors = [{ field: "from", message: error.message }];
+    throw error;
+  }
+  return sender;
+}
+
+module.exports = { resolveSender, requireMarketingSender };
