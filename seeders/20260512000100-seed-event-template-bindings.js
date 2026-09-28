@@ -14,6 +14,12 @@ const bindings = [
     variableMap: {},
   },
   {
+    eventType: "voucher.pack.purchased",
+    templateKey: "bookingConfirmation",
+    priority: "high",
+    variableMap: {},
+  },
+  {
     eventType: "payment.received",
     templateKey: "payment-receipt",
     priority: "high",

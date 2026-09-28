@@ -40,6 +40,20 @@ const EVENTS = {
       sessionTime: "60 Minute Session Pass · 10:00 – 11:00",
     },
   },
+  "voucher.pack.purchased": {
+    description: "Voucher pack purchased; send the customer their order confirmation and voucher details",
+    sourceSystem: "aeroSportsAdmin",
+    sourceResourceType: "booking",
+    requiredPayloadFields: ["guestName", "bookingNumber", "venueName"],
+    samplePayload: {
+      guestName: "Yogesh",
+      bookingNumber: "BK-2026-001",
+      venueName: "Mumbai Sports Park",
+      voucherPackName: "Family Fun Pack",
+      voucherCodes: "MOV-ABC123",
+      totalAmount: "$120.00",
+    },
+  },
   "payment.received": {
     description: "Payment captured for a booking; send receipt",
     sourceSystem: "aeroSportsAdmin",
