@@ -1,5 +1,6 @@
 const { Op } = require("sequelize");
 const { getModels } = require("../../../db/models");
+const { getSequelize } = require("../../../db/sequelize");
 
 const VALID_STATUSES = new Set(["draft", "active", "paused", "archived"]);
 
@@ -280,10 +281,16 @@ async function updatePlan({ id, body = {}, locationId }) {
 
 async function deletePlan({ id, locationId }) {
   const loc = requireLocation(locationId);
-  const { CrmMarketingCalendarPlan } = getModels();
-  const deleted = await CrmMarketingCalendarPlan.destroy({ where: { id, locationId: loc } });
-  if (!deleted) throw httpError("Marketing calendar plan not found", 404);
-  return { message: "Marketing calendar plan deleted" };
+  const { CrmMarketingCalendarPlan, CrmMarketingCalendarRule, CrmMarketingCalendarOverride } = getModels();
+  const sequelize = getSequelize();
+
+  return await sequelize.transaction(async (transaction) => {
+    await CrmMarketingCalendarRule.destroy({ where: { planId: id }, transaction });
+    await CrmMarketingCalendarOverride.destroy({ where: { planId: id }, transaction });
+    const deleted = await CrmMarketingCalendarPlan.destroy({ where: { id, locationId: loc }, transaction });
+    if (!deleted) throw httpError("Marketing calendar plan not found", 404);
+    return { message: "Marketing calendar plan deleted" };
+  });
 }
 
 async function previewPlan({ id, locationId }) {
