@@ -1,4 +1,17 @@
 const EVENTS = {
+  "member.password_reset.requested": {
+    description: "Customer account password recovery; send a secure reset link",
+    sourceSystem: "aeroSportsAdmin",
+    sourceResourceType: "member_account",
+    skipContactAutomation: true,
+    requiredPayloadFields: ["resetUrl", "expiryMinutes", "venueName"],
+    samplePayload: {
+      guestName: "Alex Rivera",
+      resetUrl: "https://example.com/account/reset?token=redacted",
+      expiryMinutes: 60,
+      venueName: "Movira Main Branch",
+    },
+  },
   "employee.password_reset.otp_requested": {
     description: "Employee portal password recovery; send a verification code",
     sourceSystem: "aeroSportsAdmin",
