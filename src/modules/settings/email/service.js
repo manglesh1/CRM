@@ -44,6 +44,7 @@ async function getEmailSettings({ locationId }) {
       })
     : [];
 
+  const sharedMoviraUsage = getSharedMoviraUsage(domains);
   return {
     setupSteps: [
       { key: "default_provider", label: "Use Movira SES", status: "ready" },
@@ -55,7 +56,7 @@ async function getEmailSettings({ locationId }) {
     providerOptions: PROVIDER_OPTIONS,
     providers: providers.map(serializeProvider),
     activeProviderRoutes: buildActiveProviderRoutes(providers),
-    domains: domains.map(serializeDomain),
+    domains: domains.map((row) => serializeDomain(row, { sharedMoviraUsage })),
     routes: routes.map(serializeRoute),
   };
 }
@@ -193,7 +194,8 @@ async function listDomains({ locationId } = {}) {
     include: [{ model: CrmSenderWarmupProfile, as: "warmupProfile", required: false }],
     order: [["isDefault", "DESC"], ["createdAt", "DESC"]],
   });
-  return rows.map(serializeDomain);
+  const sharedMoviraUsage = getSharedMoviraUsage(rows);
+  return rows.map((row) => serializeDomain(row, { sharedMoviraUsage }));
 }
 
 async function getDomain(id) {
@@ -206,7 +208,11 @@ async function getDomain(id) {
     err.statusCode = 404;
     throw err;
   }
-  return serializeDomain(row);
+  const locationDomains = await CrmEmailDomain.findAll({
+    where: { locationId: row.locationId },
+    include: [{ model: CrmSenderWarmupProfile, as: "warmupProfile", required: false }],
+  });
+  return serializeDomain(row, { sharedMoviraUsage: getSharedMoviraUsage(locationDomains) });
 }
 
 async function deleteDomain(id) {
@@ -627,11 +633,17 @@ function serializeProvider(row) {
   };
 }
 
-function serializeDomain(row) {
+function serializeDomain(row, { sharedMoviraUsage } = {}) {
   const localPart = String(row.domain || "").split(".")[0] || "events";
   const profile = row.warmupProfile || null;
   const todayLimit = Number(profile?.dailyLimit || 0);
-  const todaySent = Number(profile?.todaySent || 0);
+  const completedOnSharedMovira = profile?.status === "completed" && row.provider === "movira_ses";
+  const todaySent = completedOnSharedMovira
+    ? Number(sharedMoviraUsage?.todaySent ?? profile?.todaySent ?? 0)
+    : Number(profile?.todaySent || 0);
+  const currentHourSent = completedOnSharedMovira
+    ? Number(sharedMoviraUsage?.currentHourSent ?? profile?.currentHourSent ?? 0)
+    : Number(profile?.currentHourSent || 0);
   const warmup = profile
     ? {
         id: profile.id,
@@ -639,9 +651,9 @@ function serializeDomain(row) {
         stage: profile.stage,
         dailyLimit: profile.dailyLimit,
         hourlyLimit: profile.hourlyLimit,
-        todaySent: profile.todaySent,
+        todaySent,
         todayLimit: profile.dailyLimit,
-        currentHourSent: profile.currentHourSent,
+        currentHourSent,
         hourLimit: profile.hourlyLimit,
         todayDelivered: profile.todayDelivered,
         todayBounced: profile.todayBounced,
@@ -675,6 +687,7 @@ function serializeDomain(row) {
     status: row.status,
     dnsRecords: row.dnsRecords || [],
     warmupPlan: warmupService.getWarmupPlan(),
+    postWarmupPolicy: warmupService.getPostWarmupPolicy(row.provider),
     senderName: row.senderName,
     senderEmail: row.senderEmail || (row.domain ? `${localPart}@${row.domain}` : null),
     providerIdentityName: row.providerIdentityName,
@@ -693,6 +706,25 @@ function serializeDomain(row) {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+function getSharedMoviraUsage(domains = []) {
+  const today = new Date().toISOString().slice(0, 10);
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  return domains.reduce((usage, domain) => {
+    const profile = domain.warmupProfile;
+    if (domain.provider !== "movira_ses" || !profile) return usage;
+    if (String(profile.windowStartedAt) === today) {
+      usage.todaySent += Number(profile.todaySent || 0);
+    }
+    const hourStartedAt = profile.hourWindowStartedAt
+      ? new Date(profile.hourWindowStartedAt).getTime()
+      : 0;
+    if (hourStartedAt >= oneHourAgo) {
+      usage.currentHourSent += Number(profile.currentHourSent || 0);
+    }
+    return usage;
+  }, { todaySent: 0, currentHourSent: 0 });
 }
 
 function serializeRoute(row) {

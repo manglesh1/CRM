@@ -17,3 +17,23 @@ test("sender warmup exposes the complete customer-facing sending plan", () => {
     { stage: 10, dailyLimit: 10000, hourlyLimit: 2000 },
   ]);
 });
+
+test("shared Movira SES keeps a tenant allowance after warmup", () => {
+  assert.deepEqual(warmupService.getPostWarmupPolicy("movira_ses"), {
+    mode: "shared_movira_allowance",
+    quotaScope: "location",
+    dailyLimit: 10000,
+    hourlyLimit: 2000,
+    customProviderRecommendedAboveDaily: 10000,
+  });
+});
+
+test("customer-owned providers use their own quota after warmup", () => {
+  assert.deepEqual(warmupService.getPostWarmupPolicy("customer_ses"), {
+    mode: "customer_provider_quota",
+    quotaScope: "provider_account",
+    dailyLimit: null,
+    hourlyLimit: null,
+    customProviderRecommendedAboveDaily: null,
+  });
+});

@@ -15,6 +15,8 @@ const STAGES = [
   { stage: 10, dailyLimit: 10000, hourlyLimit: 2000 },
 ];
 
+const FINAL_STAGE = STAGES[STAGES.length - 1];
+
 const EARLY_STAGE_ROLE_LOCAL_PARTS = new Set([
   "abuse",
   "admin",
@@ -74,17 +76,40 @@ async function reserveForMessage({ message, useCase, recipient }) {
 
   const { sequelize, CrmSenderWarmupProfile } = getModels();
   return sequelize.transaction(async (transaction) => {
-    const profile = await CrmSenderWarmupProfile.findOne({
-      where: { domainId: sender.domainId },
-      transaction,
-      lock: transaction.LOCK.UPDATE,
-    });
-    if (!profile || profile.status === "completed") {
+    const sharedMoviraProfiles = sender.provider === "movira_ses"
+      ? await CrmSenderWarmupProfile.findAll({
+          where: { locationId: Number(message.locationId), provider: "movira_ses" },
+          order: [["id", "ASC"]],
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        })
+      : null;
+    const profile = sharedMoviraProfiles
+      ? sharedMoviraProfiles.find((item) => String(item.domainId) === String(sender.domainId))
+      : await CrmSenderWarmupProfile.findOne({
+          where: { domainId: sender.domainId },
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
+    if (!profile) {
+      return { allowed: true, sender, profile: null };
+    }
+
+    const completedOnSharedMovira = profile.status === "completed" && sender.provider === "movira_ses";
+    if (profile.status === "completed" && !completedOnSharedMovira) {
       return { allowed: true, sender, profile: null };
     }
 
     await resetDailyWindowIfNeeded(profile, { transaction });
     await resetHourlyWindowIfNeeded(profile, { transaction });
+
+    if (completedOnSharedMovira) {
+      for (const item of sharedMoviraProfiles) {
+        if (String(item.id) === String(profile.id)) continue;
+        await resetDailyWindowIfNeeded(item, { transaction });
+        await resetHourlyWindowIfNeeded(item, { transaction });
+      }
+    }
 
     if (profile.status === "paused" || profile.status === "failed") {
       await createWarmupEvent(profile, "send_blocked", {
@@ -99,7 +124,7 @@ async function reserveForMessage({ message, useCase, recipient }) {
       });
     }
 
-    if (isRiskyRecipient(recipient) && profile.stage <= 3) {
+    if (!completedOnSharedMovira && isRiskyRecipient(recipient) && profile.stage <= 3) {
       await createWarmupEvent(profile, "recipient_held", {
         reason: "Role-based recipient held during early warmup.",
         transaction,
@@ -112,15 +137,26 @@ async function reserveForMessage({ message, useCase, recipient }) {
       });
     }
 
-    const dailyExceeded = Number(profile.todaySent || 0) >= Number(profile.dailyLimit || 0);
-    const hourlyExceeded = Number(profile.currentHourSent || 0) >= Number(profile.hourlyLimit || 0);
+    const quotaTodaySent = completedOnSharedMovira
+      ? sharedMoviraProfiles.reduce((sum, item) => sum + Number(item.todaySent || 0), 0)
+      : Number(profile.todaySent || 0);
+    const quotaHourSent = completedOnSharedMovira
+      ? sharedMoviraProfiles.reduce((sum, item) => sum + Number(item.currentHourSent || 0), 0)
+      : Number(profile.currentHourSent || 0);
+    const quotaDailyLimit = completedOnSharedMovira ? FINAL_STAGE.dailyLimit : Number(profile.dailyLimit || 0);
+    const quotaHourlyLimit = completedOnSharedMovira ? FINAL_STAGE.hourlyLimit : Number(profile.hourlyLimit || 0);
+    const dailyExceeded = quotaTodaySent >= quotaDailyLimit;
+    const hourlyExceeded = quotaHourSent >= quotaHourlyLimit;
     if (hourlyExceeded) {
       await createWarmupEvent(profile, "quota_held", {
-        reason: `Hourly warmup quota reached: ${profile.currentHourSent}/${profile.hourlyLimit}.`,
+        reason: `${completedOnSharedMovira ? "Shared Movira" : "Hourly warmup"} quota reached: ${quotaHourSent}/${quotaHourlyLimit}.`,
         transaction,
       });
-      throw new WarmupLimitError("Hourly warmup quota reached. Message will retry in the next hour.", {
-        code: "WARMUP_HOURLY_LIMIT",
+      throw new WarmupLimitError(
+        completedOnSharedMovira
+          ? "Shared Movira hourly sending allowance reached. Message will retry in the next hour."
+          : "Hourly warmup quota reached. Message will retry in the next hour.", {
+        code: completedOnSharedMovira ? "MOVIRA_SES_HOURLY_LIMIT" : "WARMUP_HOURLY_LIMIT",
         senderDomainId: sender.domainId,
         warmupProfileId: profile.id,
         retryAfterSeconds: secondsUntilNextHour(),
@@ -128,11 +164,14 @@ async function reserveForMessage({ message, useCase, recipient }) {
     }
     if (dailyExceeded) {
       await createWarmupEvent(profile, "quota_held", {
-        reason: `Daily warmup quota reached: ${profile.todaySent}/${profile.dailyLimit}.`,
+        reason: `${completedOnSharedMovira ? "Shared Movira" : "Daily warmup"} quota reached: ${quotaTodaySent}/${quotaDailyLimit}.`,
         transaction,
       });
-      throw new WarmupLimitError("Daily warmup quota reached. Message will retry in the next window.", {
-        code: "WARMUP_DAILY_LIMIT",
+      throw new WarmupLimitError(
+        completedOnSharedMovira
+          ? "Shared Movira daily sending allowance reached. Connect a custom provider for higher volume or wait for the next daily window."
+          : "Daily warmup quota reached. Message will retry in the next window.", {
+        code: completedOnSharedMovira ? "MOVIRA_SES_DAILY_LIMIT" : "WARMUP_DAILY_LIMIT",
         senderDomainId: sender.domainId,
         warmupProfileId: profile.id,
         retryAfterSeconds: secondsUntilTomorrow(),
@@ -150,8 +189,9 @@ async function reserveForMessage({ message, useCase, recipient }) {
         warmupProfileId: profile.id,
         senderDomainId: sender.domainId,
         stage: profile.stage,
-        dailyLimit: profile.dailyLimit,
-        todaySent: profile.todaySent,
+        dailyLimit: quotaDailyLimit,
+        todaySent: completedOnSharedMovira ? quotaTodaySent + 1 : profile.todaySent,
+        mode: completedOnSharedMovira ? "shared_movira_allowance" : "warmup",
       },
     };
   });
@@ -393,6 +433,25 @@ function getWarmupPlan() {
   }));
 }
 
+function getPostWarmupPolicy(provider) {
+  if (provider === "movira_ses") {
+    return {
+      mode: "shared_movira_allowance",
+      quotaScope: "location",
+      dailyLimit: FINAL_STAGE.dailyLimit,
+      hourlyLimit: FINAL_STAGE.hourlyLimit,
+      customProviderRecommendedAboveDaily: FINAL_STAGE.dailyLimit,
+    };
+  }
+  return {
+    mode: "customer_provider_quota",
+    quotaScope: "provider_account",
+    dailyLimit: null,
+    hourlyLimit: null,
+    customProviderRecommendedAboveDaily: null,
+  };
+}
+
 function secondsUntilTomorrow() {
   const now = new Date();
   const tomorrow = new Date(now);
@@ -414,6 +473,7 @@ function percent(value) {
 module.exports = {
   STAGES,
   getWarmupPlan,
+  getPostWarmupPolicy,
   WarmupLimitError,
   ensureProfileForDomain,
   evaluateAll,
