@@ -2,7 +2,7 @@
 // field catalog endpoint that drives the advanced-filter builder, the
 // "Manage fields" drawer and the grid column set.
 
-const { Op } = require("sequelize");
+const { Op, QueryTypes } = require("sequelize");
 const { getModels } = require("../../db/models");
 const catalog = require("../contacts/fieldCatalog");
 
@@ -108,9 +108,36 @@ async function ensureSystemFields(locationId) {
   }
 }
 
+async function loadActivityNameOptions(locationId) {
+  const models = getModels();
+  const rows = await models.sequelize.query(
+    `SELECT DISTINCT BTRIM(activity.value) AS value
+       FROM crm_contacts contact
+       CROSS JOIN LATERAL jsonb_array_elements_text(
+         CASE
+           WHEN jsonb_typeof(contact."sourceSnapshot"->'activityNames') = 'array'
+             THEN contact."sourceSnapshot"->'activityNames'
+           ELSE '[]'::jsonb
+         END
+       ) AS activity(value)
+      WHERE contact."locationId" = :locationId
+        AND BTRIM(activity.value) <> ''
+      ORDER BY value
+      LIMIT 500`,
+    { replacements: { locationId }, type: QueryTypes.SELECT }
+  );
+  return rows.map((row) => cleanString(row.value, 120)).filter(Boolean);
+}
+
 async function getCatalog(query = {}) {
-  const fields = await listFields(query);
-  return catalog.buildCatalog(fields);
+  const locationId = requireLocation(query.locationId);
+  const [fields, activityNames] = await Promise.all([
+    listFields({ ...query, locationId }),
+    loadActivityNameOptions(locationId),
+  ]);
+  return catalog.buildCatalog(fields, {
+    dynamicOptions: { bookedActivities: activityNames },
+  });
 }
 
 async function createField(input = {}) {
@@ -220,6 +247,7 @@ async function deleteField(id, query = {}) {
 module.exports = {
   listFields,
   getCatalog,
+  loadActivityNameOptions,
   ensureSystemFields,
   createField,
   updateField,

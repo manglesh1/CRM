@@ -1,4 +1,4 @@
-const { Op } = require("sequelize");
+const { Op, fn, col } = require("sequelize");
 const { getModels } = require("../../../db/models");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -52,13 +52,28 @@ async function listSuppressions({ locationId, q, reason, active = "true", page =
   if (q) where.email = { [Op.iLike]: `%${normalizeEmail(q)}%` };
   const limit = Math.min(100, Math.max(1, Number(pageSize) || 25));
   const offset = Math.max(0, (Number(page) - 1) * limit);
-  const { rows, count } = await CrmMarketingSuppression.findAndCountAll({
-    where,
-    order: [["suppressedAt", "DESC"]],
-    limit,
-    offset,
-  });
-  return { items: rows.map(serialize), total: count, page: Number(page) || 1, pageSize: limit };
+  const [{ rows, count }, summaryRows] = await Promise.all([
+    CrmMarketingSuppression.findAndCountAll({
+      where,
+      order: [["suppressedAt", "DESC"]],
+      limit,
+      offset,
+    }),
+    CrmMarketingSuppression.findAll({
+      attributes: ["reason", [fn("COUNT", col("id")), "count"]],
+      where: { locationId: Number(locationId), active: true },
+      group: ["reason"],
+      raw: true,
+    }),
+  ]);
+  const byReason = Object.fromEntries(summaryRows.map((row) => [row.reason, Number(row.count || 0)]));
+  const summary = {
+    active: Object.values(byReason).reduce((sum, value) => sum + value, 0),
+    complaints: byReason.complaint || 0,
+    bounces: (byReason.hard_bounce || 0) + (byReason.bounce || 0),
+    unsubscribed: byReason.unsubscribe || 0,
+  };
+  return { items: rows.map(serialize), total: count, page: Number(page) || 1, pageSize: limit, summary };
 }
 
 async function findActiveSuppression(locationId, email) {
@@ -110,9 +125,10 @@ async function suppressEmail({ locationId, email, reason = "manual", source = "m
   return serialize(row);
 }
 
-async function releaseSuppression(id) {
+async function releaseSuppression(locationId, id) {
+  validate([!locationId && { field: "locationId", message: "locationId is required" }]);
   const { CrmMarketingSuppression } = getModels();
-  const row = await CrmMarketingSuppression.findByPk(id);
+  const row = await CrmMarketingSuppression.findOne({ where: { id, locationId: Number(locationId) } });
   if (!row) throw notFound("Suppression");
   await row.update({ active: false, releasedAt: new Date() });
   return serialize(row);

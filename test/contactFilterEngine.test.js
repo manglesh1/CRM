@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { Op } = require("sequelize");
 const engine = require("../src/modules/contacts/filterEngine");
+const catalog = require("../src/modules/contacts/fieldCatalog");
 
 const CUSTOM_FIELDS = [
   { key: "favourite_park", label: "Favourite park", fieldType: "dropdown", options: ["London", "Windsor"] },
@@ -118,4 +119,76 @@ test("searchFragment matches name / email / phone", () => {
   assert.ok(symbols(frag).includes(Op.or));
   assert.equal(frag[Op.or].length, 5);
   assert.equal(engine.searchFragment(""), null);
+});
+
+test("date catalog exposes practical operators by field role", () => {
+  const built = catalog.buildCatalog([
+    { key: "dateOfBirth", label: "Date of birth", fieldType: "date", isSystem: true },
+    { key: "membershipExpiresAt", label: "Membership expires", fieldType: "date", isSystem: true },
+    { key: "bookedActivities", label: "Activity name", fieldType: "text", isSystem: true },
+  ], { dynamicOptions: { bookedActivities: ["Birthday Party", "Open Jump"] } });
+  const created = built.builtin.find((field) => field.key === "createdAt");
+  const dob = built.custom.find((field) => field.key === "cf:dateOfBirth");
+  const expiry = built.custom.find((field) => field.key === "cf:membershipExpiresAt");
+  const activities = built.custom.find((field) => field.key === "cf:bookedActivities");
+
+  assert.ok(created.operators.includes("in_last"));
+  assert.ok(!created.operators.includes("in_next"));
+  assert.ok(dob.operators.includes("day_of_month"));
+  assert.ok(dob.operators.includes("between_days_of_month"));
+  assert.ok(expiry.operators.includes("in_next"));
+  assert.ok(!expiry.operators.includes("more_than_ago"));
+  assert.deepEqual(activities.operators, ["contains", "not_contains", "is_not_empty", "is_empty"]);
+  assert.deepEqual(activities.options, ["Birthday Party", "Open Jump"]);
+});
+
+test("relative date operators compile against a stable clock", () => {
+  const now = new Date(2026, 9, 1, 12, 0, 0);
+  const today = engine.compile(
+    { match: "all", conditions: [{ field: "createdAt", operator: "today" }] },
+    { now }
+  );
+  assert.equal(today.createdAt[Op.gte].getHours(), 0);
+  assert.equal(today.createdAt[Op.lt].getDate(), 2);
+
+  const recent = engine.compile(
+    { match: "all", conditions: [{ field: "updatedAt", operator: "in_last", value: { amount: 2, unit: "weeks" } }] },
+    { now }
+  );
+  assert.equal(recent.updatedAt[Op.gte].getDate(), 17);
+  assert.ok(recent.updatedAt[Op.lt] > now);
+});
+
+test("fixed date ranges include the full end date and after starts next day", () => {
+  const range = engine.compile({
+    match: "all",
+    conditions: [{ field: "createdAt", operator: "between", value: ["2026-09-01", "2026-09-30"] }],
+  });
+  assert.equal(range.createdAt[Op.gte].getDate(), 1);
+  assert.equal(range.createdAt[Op.lt].getDate(), 1);
+  assert.equal(range.createdAt[Op.lt].getMonth(), 9);
+
+  const after = engine.compile({
+    match: "all",
+    conditions: [{ field: "createdAt", operator: "after", value: "2026-09-30" }],
+  });
+  assert.equal(after.createdAt[Op.gte].getDate(), 1);
+  assert.equal(after.createdAt[Op.gte].getMonth(), 9);
+});
+
+test("day-of-month and relative windows reject invalid values", () => {
+  const customFields = [{ key: "dateOfBirth", label: "Date of birth", fieldType: "date" }];
+  assert.deepEqual(
+    engine.compile(
+      { match: "all", conditions: [{ field: "cf:dateOfBirth", operator: "day_of_month", value: 32 }] },
+      { customFields }
+    ),
+    {}
+  );
+  assert.deepEqual(
+    engine.compile(
+      { match: "all", conditions: [{ field: "createdAt", operator: "between_past", value: ["", 30] }] }
+    ),
+    {}
+  );
 });

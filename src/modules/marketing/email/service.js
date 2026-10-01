@@ -1983,9 +1983,9 @@ async function cancelCampaign(id, body = {}) {
   const campaign = await CrmMarketingCampaign.findByPk(id);
   if (!campaign) throw notFound("Campaign");
   validate([
-    ["sent", "cancelled"].includes(campaign.status) && {
+    !["scheduled", "sending", "paused"].includes(campaign.status) && {
       field: "status",
-      message: "This campaign can no longer be cancelled.",
+      message: "Only scheduled, sending, or paused campaigns can be stopped.",
     },
   ]);
   const reason = body.reason ? String(body.reason).slice(0, 500) : "Campaign cancelled";
@@ -2035,8 +2035,8 @@ async function createSuppression(body = {}) {
   return suppressionService.suppressEmail({ ...body, source: body.source || "manual" });
 }
 
-async function releaseSuppression(id) {
-  return suppressionService.releaseSuppression(id);
+async function releaseSuppression(locationId, id) {
+  return suppressionService.releaseSuppression(locationId, id);
 }
 
 async function updateCampaign(id, body = {}) {
@@ -2060,6 +2060,12 @@ async function deleteCampaign(id) {
   const { CrmMarketingCampaign } = getModels();
   const row = await CrmMarketingCampaign.findByPk(id);
   if (!row) throw notFound("Campaign");
+  validate([
+    !["draft", "cancelled"].includes(row.status) && {
+      field: "status",
+      message: "Only draft or cancelled campaigns can be deleted. Keep completed campaigns for reporting.",
+    },
+  ]);
   const snapshot = serializeCampaign(row);
   await row.destroy();
   return snapshot;
@@ -2089,7 +2095,12 @@ async function getStatistics(query = {}) {
 
   const where = {
     locationId: loc,
-    createdAt: { [Op.between]: [from, to] },
+    // A reporting range is about when a campaign ran, not when its draft was
+    // first created. Unsent drafts must not inflate campaign performance.
+    [Op.or]: [
+      { executionDate: { [Op.between]: [from, to] } },
+      { executionDate: null, scheduledAt: { [Op.between]: [from, to] } },
+    ],
   };
   if (query.campaignType) where.campaignType = query.campaignType;
 
@@ -2097,35 +2108,40 @@ async function getStatistics(query = {}) {
 
   const totals = campaigns.reduce(
     (acc, c) => {
-      acc.delivered += c.totalDelivered;
-      acc.opened += c.totalOpened;
-      acc.clicked += c.totalClicked;
-      acc.bounced += c.totalBounced;
-      acc.unsubscribed += c.totalUnsubscribed;
-      acc.complained += c.totalComplained;
+      // BIGINT values can be returned as strings by the database driver.
+      // Coercing here prevents totals such as "01020".
+      acc.recipients += Number(c.totalRecipients || 0);
+      acc.delivered += Number(c.totalDelivered || 0);
+      acc.opened += Number(c.totalOpened || 0);
+      acc.clicked += Number(c.totalClicked || 0);
+      acc.bounced += Number(c.totalBounced || 0);
+      acc.unsubscribed += Number(c.totalUnsubscribed || 0);
+      acc.complained += Number(c.totalComplained || 0);
       return acc;
     },
-    { delivered: 0, opened: 0, clicked: 0, bounced: 0, unsubscribed: 0, complained: 0 }
+    { recipients: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0, unsubscribed: 0, complained: 0 }
   );
 
   // Engagement summary breakdown by campaign type.
   const byType = { email_campaign: {}, workflow_campaign: {}, bulk_action_campaign: {} };
   for (const c of campaigns) {
     const bucket = byType[c.campaignType] || (byType[c.campaignType] = {});
-    bucket.delivered = (bucket.delivered || 0) + c.totalDelivered;
-    bucket.opened = (bucket.opened || 0) + c.totalOpened;
-    bucket.clicked = (bucket.clicked || 0) + c.totalClicked;
-    bucket.unsubscribed = (bucket.unsubscribed || 0) + c.totalUnsubscribed;
+    bucket.delivered = (bucket.delivered || 0) + Number(c.totalDelivered || 0);
+    bucket.opened = (bucket.opened || 0) + Number(c.totalOpened || 0);
+    bucket.clicked = (bucket.clicked || 0) + Number(c.totalClicked || 0);
+    bucket.unsubscribed = (bucket.unsubscribed || 0) + Number(c.totalUnsubscribed || 0);
   }
 
-  // Open-rate buckets per day for the chart.
+  // Engagement-rate buckets per campaign execution day for the chart.
   const dayBuckets = new Map();
   for (const c of campaigns) {
-    if (!c.executionDate && !c.scheduledAt) continue;
-    const day = (c.executionDate || c.scheduledAt).toISOString().slice(0, 10);
-    const b = dayBuckets.get(day) || { delivered: 0, opened: 0 };
-    b.delivered += c.totalDelivered;
-    b.opened += c.totalOpened;
+    const reportDate = c.executionDate || c.scheduledAt;
+    if (!reportDate) continue;
+    const day = new Date(reportDate).toISOString().slice(0, 10);
+    const b = dayBuckets.get(day) || { delivered: 0, opened: 0, clicked: 0 };
+    b.delivered += Number(c.totalDelivered || 0);
+    b.opened += Number(c.totalOpened || 0);
+    b.clicked += Number(c.totalClicked || 0);
     dayBuckets.set(day, b);
   }
   const openRateSeries = Array.from(dayBuckets.entries())
@@ -2134,18 +2150,26 @@ async function getStatistics(query = {}) {
       day,
       delivered: v.delivered,
       opened: v.opened,
+      clicked: v.clicked,
       openRate: v.delivered > 0 ? Math.round((v.opened / v.delivered) * 10000) / 100 : 0,
+      clickRate: v.delivered > 0 ? Math.round((v.clicked / v.delivered) * 10000) / 100 : 0,
     }));
 
-  // Top performers by clicks.
+  // Rate, not audience size, determines the top performer. Click count is a
+  // stable tie-breaker for campaigns with the same rate.
   const top = campaigns
     .map(serializeCampaign)
     .filter((c) => c.metrics.delivered > 0)
-    .sort((a, b) => (b.metrics.clicked || 0) - (a.metrics.clicked || 0))
+    .sort((a, b) => {
+      const aRate = Number(a.metrics.clicked || 0) / Number(a.metrics.delivered || 1);
+      const bRate = Number(b.metrics.clicked || 0) / Number(b.metrics.delivered || 1);
+      return bRate - aRate || Number(b.metrics.clicked || 0) - Number(a.metrics.clicked || 0);
+    })
     .slice(0, 5);
 
   return {
     range: { from: from.toISOString(), to: to.toISOString() },
+    campaignCount: campaigns.length,
     totals,
     byType,
     openRateSeries,

@@ -17,14 +17,61 @@ const OPERATORS_BY_TYPE = {
   enum: ["is", "is_not", "is_one_of", "is_empty", "is_not_empty"],
   number: ["eq", "neq", "gt", "gte", "lt", "lte", "between", "is_empty", "is_not_empty"],
   currency: ["eq", "neq", "gt", "gte", "lt", "lte", "between", "is_empty", "is_not_empty"],
-  date: ["on", "before", "after", "between", "is_empty", "is_not_empty"],
+  date: [
+    "on", "between", "before", "after",
+    "today", "yesterday", "day_of_month",
+    "in_last", "in_next", "more_than_ago",
+    "days_ago", "weeks_ago", "months_ago",
+    "between_days_of_month", "between_past", "between_future",
+    "is_not_empty", "is_empty",
+  ],
   boolean: ["is_true", "is_false"],
   tags: ["has_any", "has_all", "has_none", "is_empty", "is_not_empty"],
 };
 
 // Operators that take no value, and operators that take a two-part range.
-const NO_VALUE_OPERATORS = new Set(["is_empty", "is_not_empty", "is_true", "is_false"]);
-const RANGE_OPERATORS = new Set(["between"]);
+const NO_VALUE_OPERATORS = new Set([
+  "is_empty", "is_not_empty", "is_true", "is_false", "today", "yesterday",
+]);
+const RANGE_OPERATORS = new Set([
+  "between", "between_days_of_month", "between_past", "between_future",
+]);
+
+const DATE_FIXED_OPERATORS = ["on", "between", "before", "after"];
+const DATE_PAST_OPERATORS = [
+  ...DATE_FIXED_OPERATORS,
+  "today", "yesterday", "in_last", "more_than_ago",
+  "days_ago", "weeks_ago", "months_ago", "between_past",
+  "is_not_empty", "is_empty",
+];
+const DATE_FUTURE_OPERATORS = [
+  ...DATE_FIXED_OPERATORS,
+  "today", "in_next", "between_future", "is_not_empty", "is_empty",
+];
+const DATE_OF_BIRTH_OPERATORS = [
+  ...DATE_FIXED_OPERATORS,
+  "today", "yesterday", "day_of_month", "in_last", "in_next", "more_than_ago",
+  "days_ago", "weeks_ago", "months_ago", "between_days_of_month",
+  "between_past", "between_future", "is_not_empty", "is_empty",
+];
+
+const PAST_DATE_FIELDS = new Set([
+  "createdAt", "updatedAt", "lastEngagedAt", "lastVisit", "lastBookingDate",
+  "lastBookingActivityDate", "membershipPurchasedAt", "membershipActivatedAt",
+]);
+const FUTURE_DATE_FIELDS = new Set(["membershipExpiresAt", "membershipPausedUntil"]);
+
+function operatorsForField(field = {}) {
+  const key = field.storageKey || field.key;
+  if (key === "bookedActivities") {
+    return ["contains", "not_contains", "is_not_empty", "is_empty"];
+  }
+  if (field.type !== "date") return operatorsForType(field.type);
+  if (key === "dateOfBirth") return DATE_OF_BIRTH_OPERATORS;
+  if (PAST_DATE_FIELDS.has(key)) return DATE_PAST_OPERATORS;
+  if (FUTURE_DATE_FIELDS.has(key)) return DATE_FUTURE_OPERATORS;
+  return OPERATORS_BY_TYPE.date;
+}
 
 // Custom field types (crm_contact_fields.fieldType) → logical filter type.
 const CUSTOM_TYPE_TO_FILTER_TYPE = {
@@ -63,6 +110,7 @@ const SYSTEM_MOVIRA_FIELDS = [
   { key: "lastBookingStatus", label: "Last booking status", fieldType: "dropdown", options: ["pending", "confirmed", "part-paid", "cancelled"], showInTable: false, sortOrder: 160 },
   { key: "lastBookingPaymentStatus", label: "Last booking payment", fieldType: "dropdown", options: ["unpaid", "part-paid", "paid"], showInTable: false, sortOrder: 170 },
   { key: "lastBookingActivity", label: "Last booking activity", fieldType: "text", showInTable: false, sortOrder: 180 },
+  { key: "bookedActivities", label: "Activity name", fieldType: "text", showInTable: false, sortOrder: 185 },
   { key: "lastBookingActivityDate", label: "Last activity date", fieldType: "date", showInTable: false, sortOrder: 190 },
   { key: "lastBookingTime", label: "Last booking time", fieldType: "text", showInTable: false, sortOrder: 200 },
   { key: "lastBookingGuestCount", label: "Last booking pax", fieldType: "number", showInTable: false, sortOrder: 210 },
@@ -143,7 +191,7 @@ function operatorsForType(type) {
 }
 
 // Build the catalog payload the frontend consumes (builtin + custom + operator map).
-function buildCatalog(customFields = []) {
+function buildCatalog(customFields = [], { dynamicOptions = {} } = {}) {
   const builtin = BUILTIN_FIELDS.map((field) => ({
     key: field.key,
     label: field.label,
@@ -152,22 +200,25 @@ function buildCatalog(customFields = []) {
     locked: Boolean(field.locked),
     defaultColumn: Boolean(field.defaultColumn),
     sortable: Boolean(field.sortable),
-    operators: operatorsForType(field.type),
+    operators: operatorsForField(field),
   }));
   const custom = customFields.map((field) => {
     const described = describeCustomField(field);
+    const resolvedOptions = Array.isArray(dynamicOptions[described.storageKey])
+      ? dynamicOptions[described.storageKey]
+      : described.options;
     return {
       key: described.key,
       id: described.id,
       label: described.label,
       type: described.type,
       fieldType: described.fieldType,
-      options: described.options,
+      options: resolvedOptions,
       custom: true,
       isSystem: described.isSystem,
       defaultColumn: described.defaultColumn,
       sortable: false,
-      operators: operatorsForType(described.type),
+      operators: operatorsForField(described),
     };
   });
   return {
@@ -195,5 +246,6 @@ module.exports = {
   customFieldStorageKey,
   describeCustomField,
   operatorsForType,
+  operatorsForField,
   buildCatalog,
 };

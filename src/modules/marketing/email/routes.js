@@ -862,7 +862,7 @@ router.post("/suppressions", async (req, res, next) => {
 
 router.delete("/suppressions/:id", async (req, res, next) => {
   try {
-    const data = await service.releaseSuppression(req.params.id);
+    const data = await service.releaseSuppression(req.query.locationId, req.params.id);
     await safeAudit(req, {
       action: "suppression_released",
       entityType: "marketing_suppression",

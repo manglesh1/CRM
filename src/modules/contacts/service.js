@@ -208,10 +208,10 @@ function contactPayload(input = {}, locationId) {
   const lifecycle = cleanString(input.lifecycle || input.type || "lead", 40) || "lead";
   const marketingStatus = cleanString(input.marketingStatus || "subscribed", 40) || "subscribed";
 
-  if (!normalizedEmail && !normalizedPhone) {
-    throw badRequest("Contact requires at least email or phone");
+  if (!normalizedEmail) {
+    throw badRequest("Contact email is required");
   }
-  if (normalizedEmail && !EMAIL_RE.test(normalizedEmail)) {
+  if (!EMAIL_RE.test(normalizedEmail)) {
     throw badRequest("Valid email is required");
   }
   if (!VALID_SOURCE_TYPES.has(sourceType)) {
@@ -459,6 +459,9 @@ function mapCoreCustomerToContact(customer = {}, defaults = {}) {
       lastBookingStatus: customer.lastBookingStatus || null,
       lastBookingPaymentStatus: customer.lastBookingPaymentStatus || null,
       lastBookingActivity: customer.lastBookingActivity || null,
+      bookedActivities: Array.isArray(customer.activityNames)
+        ? customer.activityNames.map((name) => String(name || "").trim()).filter(Boolean).join(", ")
+        : String(customer.bookedActivities || "").trim() || null,
       lastBookingActivityDate: customer.lastBookingActivityDate || null,
       lastBookingActivityDateEnd: customer.lastBookingActivityDateEnd || null,
       lastBookingTime: customer.lastBookingTime || null,

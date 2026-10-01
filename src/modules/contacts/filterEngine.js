@@ -51,6 +51,62 @@ function dayRange(value) {
   return [start, end];
 }
 
+function startOfDay(value) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function addCalendar(value, amount, unit = "days") {
+  const date = new Date(value);
+  if (unit === "months") date.setMonth(date.getMonth() + amount);
+  else if (unit === "weeks") date.setDate(date.getDate() + amount * 7);
+  else date.setDate(date.getDate() + amount);
+  return date;
+}
+
+function positiveInteger(value, max = 100000) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0 && number <= max ? number : null;
+}
+
+function relativeValue(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const amount = positiveInteger(value.amount);
+    const unit = ["days", "weeks", "months"].includes(value.unit) ? value.unit : "days";
+    return amount === null ? null : { amount, unit };
+  }
+  const amount = positiveInteger(value);
+  return amount === null ? null : { amount, unit: "days" };
+}
+
+function rangeFragment(ref, from, to) {
+  return ref.isCol
+    ? { [ref.compare]: { [Op.gte]: from, [Op.lt]: to } }
+    : { [Op.and]: [frag(ref, { [Op.gte]: from }), frag(ref, { [Op.lt]: to })] };
+}
+
+function dayOfMonthFragment(ref, value) {
+  const day = positiveInteger(value, 31);
+  if (day === null || day < 1) return null;
+  return sqlWhere(literal(`EXTRACT(DAY FROM ${ref.compare})`), { [Op.eq]: day });
+}
+
+function betweenDaysOfMonthFragment(ref, value) {
+  const from = positiveInteger(Array.isArray(value) ? value[0] : null, 31);
+  const to = positiveInteger(Array.isArray(value) ? value[1] : null, 31);
+  if (from === null || to === null || from < 1 || to < 1) return null;
+  const expression = literal(`EXTRACT(DAY FROM ${ref.compare})`);
+  if (from <= to) return sqlWhere(expression, { [Op.between]: [from, to] });
+  return {
+    [Op.or]: [
+      sqlWhere(expression, { [Op.gte]: from }),
+      sqlWhere(expression, { [Op.lte]: to }),
+    ],
+  };
+}
+
 // Build a lookup of catalog key -> resolved field descriptor. Built-in fields
 // carry a column; custom fields carry a validated JSONB storage key + type.
 function buildFieldMap(customFields = []) {
@@ -120,7 +176,7 @@ function buildTagsCondition(operator, value) {
   }
 }
 
-function buildCondition(condition, fieldMap) {
+function buildCondition(condition, fieldMap, now = new Date()) {
   if (!condition || typeof condition !== "object") return null;
   const def = fieldMap.get(condition.field);
   if (!def) return null;
@@ -152,15 +208,54 @@ function buildCondition(condition, fieldMap) {
     }
     if (operator === "after") {
       const date = parseDate(value);
-      return date ? frag(ref, { [Op.gt]: date }) : null;
+      return date ? frag(ref, { [Op.gte]: addCalendar(startOfDay(date), 1) }) : null;
     }
     if (operator === "between") {
       const from = parseDate(Array.isArray(value) ? value[0] : value);
       const to = parseDate(Array.isArray(value) ? value[1] : condition.valueTo);
       if (!from || !to) return null;
-      return ref.isCol
-        ? { [ref.compare]: { [Op.between]: [from, to] } }
-        : { [Op.and]: [frag(ref, { [Op.gte]: from }), frag(ref, { [Op.lte]: to })] };
+      const start = startOfDay(from);
+      const end = addCalendar(startOfDay(to), 1);
+      return start < end ? rangeFragment(ref, start, end) : null;
+    }
+    if (operator === "today") return rangeFragment(ref, startOfDay(now), addCalendar(startOfDay(now), 1));
+    if (operator === "yesterday") {
+      const end = startOfDay(now);
+      return rangeFragment(ref, addCalendar(end, -1), end);
+    }
+    if (operator === "day_of_month") return dayOfMonthFragment(ref, value);
+    if (operator === "between_days_of_month") return betweenDaysOfMonthFragment(ref, value);
+    if (operator === "in_last" || operator === "in_next") {
+      const relative = relativeValue(value);
+      if (!relative) return null;
+      const anchor = new Date(now);
+      const edge = addCalendar(anchor, operator === "in_last" ? -relative.amount : relative.amount, relative.unit);
+      return operator === "in_last"
+        ? rangeFragment(ref, edge, new Date(anchor.getTime() + 1))
+        : rangeFragment(ref, anchor, new Date(edge.getTime() + 1));
+    }
+    if (["more_than_ago", "days_ago", "weeks_ago", "months_ago"].includes(operator)) {
+      const amount = positiveInteger(value);
+      if (amount === null) return null;
+      const unit = operator === "weeks_ago" ? "weeks" : operator === "months_ago" ? "months" : "days";
+      const target = startOfDay(addCalendar(now, -amount, unit));
+      if (operator === "more_than_ago") return frag(ref, { [Op.lt]: target });
+      return rangeFragment(ref, target, addCalendar(target, 1));
+    }
+    if (operator === "between_past" || operator === "between_future") {
+      const first = positiveInteger(Array.isArray(value) ? value[0] : null);
+      const second = positiveInteger(Array.isArray(value) ? value[1] : null);
+      if (first === null || second === null) return null;
+      const low = Math.min(first, second);
+      const high = Math.max(first, second);
+      if (operator === "between_past") {
+        const from = startOfDay(addCalendar(now, -high));
+        const to = addCalendar(startOfDay(addCalendar(now, -low)), 1);
+        return rangeFragment(ref, from, to);
+      }
+      const from = startOfDay(addCalendar(now, low));
+      const to = addCalendar(startOfDay(addCalendar(now, high)), 1);
+      return rangeFragment(ref, from, to);
     }
     return null;
   }
@@ -215,15 +310,15 @@ function buildCondition(condition, fieldMap) {
   }
 }
 
-function buildGroup(group, fieldMap, depth) {
+function buildGroup(group, fieldMap, depth, now) {
   if (depth > MAX_DEPTH) return null;
   const conditions = Array.isArray(group.conditions) ? group.conditions : [];
   const combinator = group.match === "any" ? Op.or : Op.and;
   const compiled = conditions
     .map((entry) =>
       Array.isArray(entry?.conditions)
-        ? buildGroup(entry, fieldMap, depth + 1)
-        : buildCondition(entry, fieldMap)
+        ? buildGroup(entry, fieldMap, depth + 1, now)
+        : buildCondition(entry, fieldMap, now)
     )
     .filter(Boolean);
   if (!compiled.length) return null;
@@ -310,10 +405,10 @@ function analyze(filters) {
 
 // Compile a filter (tree or legacy) to a Sequelize where fragment.
 // Returns {} when there is nothing to constrain.
-function compile(filters, { customFields = [] } = {}) {
+function compile(filters, { customFields = [], now = new Date() } = {}) {
   const fieldMap = buildFieldMap(customFields);
   const tree = normalize(filters);
-  const where = buildGroup(tree, fieldMap, 0);
+  const where = buildGroup(tree, fieldMap, 0, now);
   return where || {};
 }
 
