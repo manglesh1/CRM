@@ -299,6 +299,11 @@ async function verifyDomain(id) {
   const { records: checked, allOk } = await verifyDomainRecords(seedRecords, row.domain);
   const providerOk = Boolean(identity.providerVerified);
   const newStatus = allOk && providerOk ? "verified" : "verification_requested";
+  const verificationMessage = !allOk
+    ? "One or more DNS records are still pending."
+    : !providerOk
+      ? "All DNS records are live. Waiting for the email provider to confirm the sending identity."
+      : null;
   await row.update({
     status: newStatus,
     verifiedAt: newStatus === "verified" ? new Date() : null,
@@ -307,7 +312,7 @@ async function verifyDomain(id) {
     providerIdentityArn: identity?.providerIdentityArn || row.providerIdentityArn || null,
     mailFromDomain: identity?.mailFromDomain || row.mailFromDomain || null,
     lastDnsCheckedAt: new Date(),
-    lastVerificationError: newStatus === "verified" ? null : "DNS records are still pending or SES has not marked the identity ready.",
+    lastVerificationError: verificationMessage,
   });
   if (newStatus === "verified") {
     await warmupService.ensureProfileForDomain(await CrmEmailDomain.findByPk(row.id));
