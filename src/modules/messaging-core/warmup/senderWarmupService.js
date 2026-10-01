@@ -53,7 +53,7 @@ async function ensureProfileForDomain(domain) {
       providerConfigId: domain.providerConfigId || null,
       status: "active",
       ...stageConfig(1),
-      metadata: { createdFrom: "domain_verified" },
+      metadata: { createdFrom: "domain_verified", lastAdvancedDate: todayKey() },
     },
   });
   if (created) {
@@ -219,7 +219,8 @@ async function evaluateProfile(profile) {
     return finish({ profileId: profile.id, action: "kept_paused", reason: profile.pausedReason });
   }
 
-  if (profile.metadata?.lastAdvancedDate === todayKey()) {
+  const lastStageChangeDate = profile.metadata?.lastAdvancedDate || dateKey(profile.startedAt);
+  if (lastStageChangeDate === todayKey()) {
     await profile.update({ lastEvaluatedAt: now });
     return finish({ profileId: profile.id, action: "already_advanced_today" });
   }
@@ -378,6 +379,20 @@ function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function dateKey(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
+}
+
+function getWarmupPlan() {
+  return STAGES.map(({ stage, dailyLimit, hourlyLimit }) => ({
+    stage,
+    dailyLimit,
+    hourlyLimit,
+  }));
+}
+
 function secondsUntilTomorrow() {
   const now = new Date();
   const tomorrow = new Date(now);
@@ -398,6 +413,7 @@ function percent(value) {
 
 module.exports = {
   STAGES,
+  getWarmupPlan,
   WarmupLimitError,
   ensureProfileForDomain,
   evaluateAll,

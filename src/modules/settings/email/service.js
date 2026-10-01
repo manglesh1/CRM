@@ -674,6 +674,7 @@ function serializeDomain(row) {
     providerConfigId: row.providerConfigId,
     status: row.status,
     dnsRecords: row.dnsRecords || [],
+    warmupPlan: warmupService.getWarmupPlan(),
     senderName: row.senderName,
     senderEmail: row.senderEmail || (row.domain ? `${localPart}@${row.domain}` : null),
     providerIdentityName: row.providerIdentityName,
